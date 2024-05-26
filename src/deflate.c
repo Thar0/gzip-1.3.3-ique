@@ -66,7 +66,7 @@
 
 #include "tailor.h"
 #include "gzip.h"
-#include "lzw.h" /* just for consistency checking */
+#include "deflate.h"
 
 #ifdef RCSID
 static char rcsid[] = "$Id: deflate.c,v 0.15 1993/06/24 10:53:53 jloup Exp $";
