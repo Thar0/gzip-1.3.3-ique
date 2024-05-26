@@ -198,9 +198,6 @@ extern int test;           /* check .z file integrity */
 extern int to_stdout;      /* output to stdout (-c) */
 extern int save_orig_name; /* set if original name must be saved */
 
-#define get_byte()  (inptr < insize ? inbuf[inptr++] : fill_inbuf(0))
-#define try_byte()  (inptr < insize ? inbuf[inptr++] : fill_inbuf(1))
-
 /* put_byte is used for the compressed output, put_ubyte for the
  * uncompressed output. However unlzw() uses window for its
  * suffix table instead of its output buffer, so it does not use put_ubyte
@@ -288,21 +285,17 @@ void     copy_block OF((char *buf, unsigned len, int header));
 extern int copy           OF((FILE *in, FILE *out));
 extern ulg  updcrc        OF((uch *s, unsigned n));
 extern void clear_bufs    OF((void));
-extern int  fill_inbuf    OF((int eof_ok));
 extern void flush_outbuf  OF((void));
 extern void flush_window  OF((void));
 extern void write_buf     OF((FILE *fd, voidp buf, unsigned cnt));
 extern char *strlwr       OF((char *s));
 extern char *base_name    OF((char *fname));
 extern int xunlink        OF((char *fname));
-extern char *add_envopt   OF((int *argcp, char ***argvp, char *env));
 extern void error         OF((char *m));
 extern void warning       OF((char *m));
 extern void read_error    OF((void));
 extern void write_error   OF((void));
 extern void display_ratio OF((off_t num, off_t den, FILE *file));
-extern void fprint_off    OF((FILE *, off_t, int));
-extern voidp xmalloc      OF((unsigned int size));
 
 	/* in inflate.c */
 extern int inflate OF((void));

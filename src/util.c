@@ -41,26 +41,6 @@ static char rcsid[] = "$Id: util.c,v 0.15 1993/06/15 09:04:13 jloup Exp $";
 extern ulg crc_32_tab[];   /* crc table, defined below */
 
 /* ===========================================================================
- * Copy input to output unchanged: zcat == cat with --force.
- * IN assertion: insize bytes have already been read in inbuf.
- */
-int copy(in, out)
-    FILE *in, *out;   /* input and output file descriptors */
-{
-    errno = 0;
-    while (insize != 0 && (int)insize != -1) {
-	write_buf(out, (char*)inbuf, insize);
-	bytes_out += insize;
-	insize = fread((char*)inbuf, 1, INBUFSIZ, in);
-    }
-    if ((int)insize == -1) {
-	read_error();
-    }
-    bytes_in = bytes_out;
-    return OK;
-}
-
-/* ===========================================================================
  * Run a set of bytes through the crc shift register.  If s is a NULL
  * pointer, then initialize the crc shift register contents instead.
  * Return the current crc in either case.
@@ -96,37 +76,6 @@ void clear_bufs()
 }
 
 /* ===========================================================================
- * Fill the input buffer. This is called only when the buffer is empty.
- */
-int fill_inbuf(eof_ok)
-    int eof_ok;          /* set if EOF acceptable as a result */
-{
-    int len;
-
-    /* Read as much as possible */
-    insize = 0;
-    do {
-	len = fread((char*)inbuf+insize, 1, INBUFSIZ-insize, ifd);
-	if (len == 0) break;
-	if (len == -1) {
-	  read_error();
-	  break;
-	}
-	insize += len;
-    } while (insize < INBUFSIZ);
-
-    if (insize == 0) {
-	if (eof_ok) return EOF;
-	flush_window();
-	errno = 0;
-	read_error();
-    }
-    bytes_in += (off_t)insize;
-    inptr = 1;
-    return inbuf[0];
-}
-
-/* ===========================================================================
  * Write the output buffer outbuf[0..outcnt-1] and update bytes_out.
  * (used for the compressed data only)
  */
@@ -135,22 +84,6 @@ void flush_outbuf()
     if (outcnt == 0) return;
 
     write_buf(ofd, (char *)outbuf, outcnt);
-    bytes_out += (off_t)outcnt;
-    outcnt = 0;
-}
-
-/* ===========================================================================
- * Write the output window window[0..outcnt-1] and update crc and bytes_out.
- * (Used for the decompressed data only.)
- */
-void flush_window()
-{
-    if (outcnt == 0) return;
-    updcrc(window, outcnt);
-
-    if (!test) {
-	write_buf(ofd, (char *)window, outcnt);
-    }
     bytes_out += (off_t)outcnt;
     outcnt = 0;
 }
@@ -290,67 +223,6 @@ int strcspn(s, reject)
 #endif
 
 /* ========================================================================
- * Add an environment variable (if any) before argv, and update argc.
- * Return the expanded environment variable to be freed later, or NULL 
- * if no options were added to argv.
- */
-#define SEPARATOR	" \t"	/* separators in env variable */
-
-char *add_envopt(argcp, argvp, env)
-    int *argcp;          /* pointer to argc */
-    char ***argvp;       /* pointer to argv */
-    char *env;           /* name of environment variable */
-{
-    char *p;             /* running pointer through env variable */
-    char **oargv;        /* runs through old argv array */
-    char **nargv;        /* runs through new argv array */
-    int	 oargc = *argcp; /* old argc */
-    int  nargc = 0;      /* number of arguments in env variable */
-
-    env = (char*)getenv(env);
-    if (env == NULL) return NULL;
-
-    p = (char*)xmalloc(strlen(env)+1);
-    env = strcpy(p, env);                    /* keep env variable intact */
-
-    for (p = env; *p; nargc++ ) {            /* move through env */
-	p += strspn(p, SEPARATOR);	     /* skip leading separators */
-	if (*p == '\0') break;
-
-	p += strcspn(p, SEPARATOR);	     /* find end of word */
-	if (*p) *p++ = '\0';		     /* mark it */
-    }
-    if (nargc == 0) {
-	free(env);
-	return NULL;
-    }
-    *argcp += nargc;
-    /* Allocate the new argv array, with an extra element just in case
-     * the original arg list did not end with a NULL.
-     */
-    nargv = (char**)calloc(*argcp+1, sizeof(char *));
-    if (nargv == NULL) error("out of memory");
-    oargv  = *argvp;
-    *argvp = nargv;
-
-    /* Copy the program name first */
-    if (oargc-- < 0) error("argc<=0");
-    *(nargv++) = *(oargv++);
-
-    /* Then copy the environment args */
-    for (p = env; nargc > 0; nargc--) {
-	p += strspn(p, SEPARATOR);	     /* skip separators */
-	*(nargv++) = p;			     /* store start */
-	while (*p++) ;			     /* skip over word */
-    }
-
-    /* Finally copy the old args and add a NULL (usual convention) */
-    while (oargc--) *(nargv++) = *(oargv++);
-    *nargv = NULL;
-    return env;
-}
-
-/* ========================================================================
  * Error handlers.
  */
 void error(m)
@@ -397,52 +269,6 @@ void display_ratio(num, den, file)
     FILE *file;
 {
     fprintf(file, "%5.1f%%", den == 0 ? 0 : 100.0 * num / den);
-}
-
-/* ========================================================================
- * Print an off_t.  There's no completely portable way to use printf,
- * so we do it ourselves.
- */
-void fprint_off(file, offset, width)
-    FILE *file;
-    off_t offset;
-    int width;
-{
-    char buf[CHAR_BIT * sizeof (off_t)];
-    char *p = buf + sizeof buf;
-    int negative = offset < 0;
-    /* Don't negate offset here; it might overflow.  */
-    do {
-	int remainder = offset % 10;
-	int quotient = offset / 10;
-	if (offset < 0 && 0 < remainder) {
-	    remainder -= 10;
-	    quotient++;
-	}
-	*--p = (remainder < 0 ? -remainder : remainder) + '0';
-	width--;
-	offset = quotient;
-    } while (offset != 0);
-    for (width -= negative;  0 < width;  width--) {
-	putc (' ', file);
-    }
-    if (negative) {
-	putc ('-', file);
-    }
-    for (;  p < buf + sizeof buf;  p++)
-	putc (*p, file);
-}
-
-/* ========================================================================
- * Semi-safe malloc -- never returns NULL.
- */
-voidp xmalloc (size)
-    unsigned size;
-{
-    voidp cp = (voidp)malloc (size);
-
-    if (cp == NULL) error("out of memory");
-    return cp;
 }
 
 /* ========================================================================
