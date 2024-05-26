@@ -16,6 +16,7 @@ endif
 SRC_DIRS := $(shell find src -type d)
 C_FILES := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
 O_FILES := $(foreach f,$(C_FILES),$(BUILD_DIR)/$(f:.c=.o))
+DEP_FILES := $(foreach f,$(O_FILES),$(f:.o=.d))
 
 $(shell mkdir -p $(foreach dir,$(SRC_DIRS),$(BUILD_DIR)/$(dir)))
 
@@ -27,8 +28,10 @@ clean:
 	$(RM) -rf $(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: %.c
-	$(CC) -c $(CFLAGS) $< -o $@
+	$(CC) -c -MD -MMD $(CFLAGS) $< -o $@
 
 $(TARGET): $(O_FILES)
 	$(CC) $(LDFLAGS) $^ -o $@
 #	$(AR) rcs $@ $^
+
+-include $(DEP_FILES)
