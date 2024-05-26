@@ -85,9 +85,6 @@ local int bi_valid;
  * are always zero.
  */
 
-int (*read_buf) OF((char *buf, unsigned size));
-/* Current input function. Set to mem_read for in-memory compression */
-
 #ifdef DEBUG
   off_t bits_sent;   /* bit length of the compressed data */
 #endif
@@ -104,13 +101,6 @@ void bi_init (zipfile)
 #ifdef DEBUG
     bits_sent = 0L;
 #endif
-
-    /* Set the defaults for file compression. They are set by memcompress
-     * for in-memory compression.
-     */
-    if (zfile != NO_FILE) {
-	read_buf  = file_read;
-    }
 }
 
 /* ===========================================================================

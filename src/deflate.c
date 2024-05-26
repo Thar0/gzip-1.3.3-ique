@@ -322,7 +322,7 @@ void lm_init (pack_level, flags)
     match_init(); /* initialize the asm code */
 #endif
 
-    lookahead = read_buf((char*)window,
+    lookahead = file_read((char*)window,
 			 sizeof(int) <= 2 ? (unsigned)WSIZE : 2*WSIZE);
 
     if (lookahead == 0 || lookahead == (unsigned)EOF) {
@@ -555,7 +555,7 @@ local void fill_window()
     }
     /* At this point, more >= 2 */
     if (!eofile) {
-        n = read_buf((char*)window+strstart+lookahead, more);
+        n = file_read((char*)window+strstart+lookahead, more);
         if (n == 0 || n == (unsigned)EOF) {
             eofile = 1;
         } else {

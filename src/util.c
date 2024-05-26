@@ -45,13 +45,13 @@ extern ulg crc_32_tab[];   /* crc table, defined below */
  * IN assertion: insize bytes have already been read in inbuf.
  */
 int copy(in, out)
-    int in, out;   /* input and output file descriptors */
+    FILE *in, *out;   /* input and output file descriptors */
 {
     errno = 0;
     while (insize != 0 && (int)insize != -1) {
 	write_buf(out, (char*)inbuf, insize);
 	bytes_out += insize;
-	insize = read(in, (char*)inbuf, INBUFSIZ);
+	insize = fread((char*)inbuf, 1, INBUFSIZ, in);
     }
     if ((int)insize == -1) {
 	read_error();
@@ -106,7 +106,7 @@ int fill_inbuf(eof_ok)
     /* Read as much as possible */
     insize = 0;
     do {
-	len = read(ifd, (char*)inbuf+insize, INBUFSIZ-insize);
+	len = fread((char*)inbuf+insize, 1, INBUFSIZ-insize, ifd);
 	if (len == 0) break;
 	if (len == -1) {
 	  read_error();
@@ -160,13 +160,13 @@ void flush_window()
  * for error return.
  */
 void write_buf(fd, buf, cnt)
-    int       fd;
+    FILE     *fd;
     voidp     buf;
     unsigned  cnt;
 {
     unsigned  n;
 
-    while ((n = write(fd, buf, cnt)) != cnt) {
+    while ((n = fwrite(buf, 1, cnt, fd)) != cnt) {
 	if (n == (unsigned)(-1)) {
 	    write_error();
 	}

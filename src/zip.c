@@ -31,7 +31,8 @@ off_t header_bytes;   /* number of bytes in gzip header */
  *   The variables time_stamp and save_orig_name are initialized.
  */
 int zip(in, out)
-    int in, out;            /* input and output file descriptors */
+    FILE *in;
+    FILE *out;            /* input and output file descriptors */
 {
     uch  flags = 0;         /* general purpose bit flags */
     ush  attr = 0;          /* ascii/binary flag */
@@ -108,7 +109,7 @@ int file_read(buf, size)
 
     Assert(insize == 0, "inbuf not empty");
 
-    len = read(ifd, buf, size);
+    len = fread(buf, 1, size, ifd);
     if (len == 0) return (int)len;
     if (len == (unsigned)-1) {
 	read_error();

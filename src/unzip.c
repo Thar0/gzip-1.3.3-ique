@@ -51,7 +51,7 @@ int ext_header = 0; /* set if extended local header */
  * Get ofname from the local header if necessary.
  */
 int check_zipfile(in)
-    int in;   /* input file descriptors */
+    FILE *in;   /* input file descriptors */
 {
     uch *h = inbuf + inptr; /* first local header */
 
@@ -99,7 +99,8 @@ int check_zipfile(in)
  *   The magic header has already been checked. The output buffer is cleared.
  */
 int unzip(in, out)
-    int in, out;   /* input and output file descriptors */
+    FILE *in;
+    FILE *out;      /* input and output file descriptors */
 {
     ulg orig_crc = 0;       /* original crc */
     ulg orig_len = 0;       /* original uncompressed length */

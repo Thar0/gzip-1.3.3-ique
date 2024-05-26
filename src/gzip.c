@@ -241,8 +241,8 @@ char ifname[MAX_PATH_LEN]; /* input file name */
 char ofname[MAX_PATH_LEN]; /* output file name */
 int  remove_ofname = 0;	   /* remove output file on error */
 struct stat istat;         /* status for input file */
-int  ifd;                  /* input file descriptor */
-int  ofd;                  /* output file descriptor */
+FILE *ifd;                 /* input file */
+FILE *ofd;                 /* output file */
 unsigned insize;           /* valid bytes in inbuf */
 unsigned inptr;            /* index of next byte to be processed in inbuf */
 unsigned outcnt;           /* bytes in output buffer */
@@ -291,13 +291,13 @@ local int  make_ofname  OF((void));
 local int  same_file    OF((struct stat *stat1, struct stat *stat2));
 local int name_too_long OF((char *name, struct stat *statb));
 local void shorten_name  OF((char *name));
-local int  get_method   OF((int in));
-local void do_list      OF((int ifd, int method));
+local int  get_method   OF((FILE *in));
+local void do_list      OF((FILE *ifd, int method));
 local int  check_ofname OF((void));
 local void copy_stat    OF((struct stat *ifstat));
 local void do_exit      OF((int exitcode));
       int main          OF((int argc, char **argv));
-int (*work) OF((int infile, int outfile)) = zip; /* function to call */
+int (*work) OF((FILE *infile, FILE *outfile)) = zip; /* function to call */
 
 #ifndef NO_DIR
 local void treat_dir    OF((char *dir));
@@ -598,7 +598,7 @@ int main (argc, argv)
 	}
     }
     if (list && !quiet && file_count > 1) {
-	do_list(-1, -1); /* print totals */
+	do_list(NULL, -1); /* print totals */
     }
     do_exit(exit_code);
     return exit_code; /* just to avoid lint warning */
@@ -678,9 +678,8 @@ local void treat_file(iname)
      * parameter is ignored but required by some systems (VMS) and forbidden
      * on other systems (MacOS).
      */
-    ifd = OPEN(ifname, ascii && !decompress ? O_RDONLY : O_RDONLY | O_BINARY,
-	       RW_USER);
-    if (ifd == -1) {
+    ifd = fopen(ifname, ascii && !decompress ? "r" : "rb");
+    if (ifd == NULL) {
 	progerror(ifname);
 	return;
     }
@@ -690,13 +689,13 @@ local void treat_file(iname)
     if (decompress) {
 	method = get_method(ifd); /* updates ofname if original given */
 	if (method < 0) {
-	    close(ifd);
+	    fclose(ifd);
 	    return;               /* error message already emitted */
 	}
     }
     if (list) {
         do_list(ifd, method);
-        close(ifd);
+        fclose(ifd);
         return;
     }
 
@@ -705,7 +704,7 @@ local void treat_file(iname)
      * a new ofname and save the original name in the compressed file.
      */
     if (to_stdout) {
-	ofd = fileno(stdout);
+	ofd = stdout;
 	/* keep remove_ofname as zero */
     } else {
 	if (create_outfile() != OK) return;
@@ -738,8 +737,8 @@ local void treat_file(iname)
 	bytes_out = 0;            /* required for length check */
     }
 
-    close(ifd);
-    if (!to_stdout && close(ofd)) {
+    fclose(ifd);
+    if (!to_stdout && fclose(ofd)) {
 	write_error();
     }
     if (method == -1) {
@@ -778,23 +777,20 @@ local void treat_file(iname)
 local int create_outfile()
 {
     struct stat	ostat; /* stat for ofname */
-    int flags = O_WRONLY | O_CREAT | O_EXCL | O_BINARY;
+    const char *mode = (ascii && decompress) ? "w" : "wb";
 
-    if (ascii && decompress) {
-	flags &= ~O_BINARY; /* force ascii text mode */
-    }
     for (;;) {
 	/* Make sure that ofname is not an existing file */
 	if (check_ofname() != OK) {
-	    close(ifd);
+	    fclose(ifd);
 	    return ERROR;
 	}
 	/* Create the output file */
 	remove_ofname = 1;
-	ofd = OPEN(ofname, flags, RW_USER);
-	if (ofd == -1) {
+	ofd = fopen(ofname, mode);
+	if (ofd == NULL) {
 	    progerror(ofname);
-	    close(ifd);
+	    fclose(ifd);
 	    return ERROR;
 	}
 
@@ -802,10 +798,10 @@ local int create_outfile()
 #ifdef NO_FSTAT
 	if (stat(ofname, &ostat) != 0) {
 #else
-	if (fstat(ofd, &ostat) != 0) {
+	if (fstat(fileno(ofd), &ostat) != 0) {
 #endif
 	    progerror(ofname);
-	    close(ifd); close(ofd);
+	    fclose(ifd); fclose(ofd);
 	    xunlink (ofname);
 	    return ERROR;
 	}
@@ -817,7 +813,7 @@ local int create_outfile()
 		  progname, ofname));
 	    return OK;
 	}
-	close(ofd);
+	fclose(ofd);
 	xunlink (ofname);
 #ifdef NO_MULTIPLE_DOTS
 	/* Should never happen, see check_ofname() */
@@ -1072,7 +1068,6 @@ local int make_ofname()
     return WARNING;
 }
 
-
 /* ========================================================================
  * Check the magic number of the input file and update ofname if an
  * original name was given and to_stdout is not set.
@@ -1085,7 +1080,7 @@ local int make_ofname()
  *   If the member is a zip file, it must be the only one.
  */
 local int get_method(in)
-    int in;        /* input file descriptor */
+    FILE *in __attribute__((unused));        /* input file descriptor */
 {
     uch flags;     /* compression flags */
     char magic[2]; /* magic header */
@@ -1239,8 +1234,8 @@ local int get_method(in)
  * IN assertions: time_stamp, header_bytes and ifile_size are initialized.
  */
 local void do_list(ifd, method)
-    int ifd;     /* input file descriptor */
-    int method;  /* compression method */
+    FILE *ifd;     /* input file descriptor */
+    int method;    /* compression method */
 {
     ulg crc;  /* original crc */
     static int first_time = 1;
@@ -1255,9 +1250,12 @@ local void do_list(ifd, method)
     int positive_off_t_width = 1;
     off_t o;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshift-negative-value"
     for (o = OFF_T_MAX;  9 < o;  o /= 10) {
 	positive_off_t_width++;
     }
+#pragma GCC diagnostic pop
 
     if (first_time && method >= 0) {
 	first_time = 0;
@@ -1299,11 +1297,11 @@ local void do_list(ifd, method)
          * Use "gunzip < foo.gz | wc -c" to get the uncompressed size if
          * you are not concerned about speed.
          */
-        bytes_in = lseek(ifd, (off_t)(-8), SEEK_END);
+        bytes_in = fseek(ifd, (off_t)(-8), SEEK_END);
         if (bytes_in != -1L) {
             uch buf[8];
             bytes_in += 8L;
-            if (read(ifd, (char*)buf, sizeof(buf)) != sizeof(buf)) {
+            if (fread((char*)buf, 1, sizeof(buf), ifd) != sizeof(buf)) {
                 read_error();
             }
             crc       = LG(buf);
@@ -1667,7 +1665,7 @@ local void do_exit(exitcode)
 RETSIGTYPE abort_gzip()
 {
    if (remove_ofname) {
-       close(ofd);
+       fclose(ofd);
        xunlink (ofname);
    }
    do_exit(ERROR);

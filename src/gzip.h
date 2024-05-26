@@ -138,8 +138,8 @@ extern off_t bytes_in;   /* number of input bytes */
 extern off_t bytes_out;  /* number of output bytes */
 extern off_t header_bytes;/* number of bytes in gzip header */
 
-extern int  ifd;        /* input file descriptor */
-extern int  ofd;        /* output file descriptor */
+extern FILE *ifd;       /* input file descriptor */
+extern FILE *ofd;       /* output file descriptor */
 extern char ifname[];   /* input file name or "stdin" */
 extern char ofname[];   /* output file name or "stdout" */
 extern char *progname;  /* program name */
@@ -147,8 +147,8 @@ extern char *progname;  /* program name */
 extern time_t time_stamp; /* original time stamp (modification time) */
 extern off_t ifile_size; /* input file size, -1 for devices (debug only) */
 
-typedef int file_t;     /* Do not use stdio */
-#define NO_FILE  (-1)   /* in memory compression */
+typedef FILE* file_t;     /* Do not use stdio */
+#define NO_FILE  (NULL)   /* in memory compression */
 
 
 #define	PACK_MAGIC     "\037\036" /* Magic header for packed files */
@@ -258,18 +258,12 @@ extern int save_orig_name; /* set if original name must be saved */
 		   if (exit_code == OK) exit_code = WARNING;}
 
 	/* in zip.c: */
-extern int zip        OF((int in, int out));
+extern int zip        OF((FILE *in, FILE *out));
 extern int file_read  OF((char *buf,  unsigned size));
 
 	/* in unzip.c */
-extern int unzip      OF((int in, int out));
-extern int check_zipfile OF((int in));
-
-	/* in unpack.c */
-extern int unpack     OF((int in, int out));
-
-	/* in unlzh.c */
-extern int unlzh      OF((int in, int out));
+extern int unzip      OF((FILE *in, FILE *out));
+extern int check_zipfile OF((FILE *in));
 
 	/* in gzip.c */
 RETSIGTYPE abort_gzip OF((void));
@@ -289,16 +283,15 @@ void     send_bits  OF((int value, int length));
 unsigned bi_reverse OF((unsigned value, int length));
 void     bi_windup  OF((void));
 void     copy_block OF((char *buf, unsigned len, int header));
-extern   int (*read_buf) OF((char *buf, unsigned size));
 
 	/* in util.c: */
-extern int copy           OF((int in, int out));
+extern int copy           OF((FILE *in, FILE *out));
 extern ulg  updcrc        OF((uch *s, unsigned n));
 extern void clear_bufs    OF((void));
 extern int  fill_inbuf    OF((int eof_ok));
 extern void flush_outbuf  OF((void));
 extern void flush_window  OF((void));
-extern void write_buf     OF((int fd, voidp buf, unsigned cnt));
+extern void write_buf     OF((FILE *fd, voidp buf, unsigned cnt));
 extern char *strlwr       OF((char *s));
 extern char *base_name    OF((char *fname));
 extern int xunlink        OF((char *fname));
