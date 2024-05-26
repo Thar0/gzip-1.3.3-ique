@@ -1,10 +1,16 @@
 TARGET := gzip
 BUILD_DIR := build
 
+DEBUG ?= 0
+
 AR := ar
 CC := gcc
 
-CFLAGS := -O2 -g -DDEBUG -ffunction-sections -fdata-sections
+CFLAGS := -O2 -g -ffunction-sections -fdata-sections
+
+ifeq ($(DEBUG),1)
+CFLAGS += -DDEBUG
+endif
 
 SRC_DIRS := $(shell find src -type d)
 C_FILES := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))

@@ -47,12 +47,12 @@ static char rcsid[] = "$Id: gzip.c,v 0.24 1993/06/24 10:52:07 jloup Exp $";
 #include <signal.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <getopt.h>
 
 #include "tailor.h"
 #include "gzip.h"
 #include "lzw.h"
 #include "revision.h"
-#include "getopt.h"
 
 		/* configuration */
 
@@ -218,11 +218,9 @@ int recursive = 0;    /* recurse through directories (-r) */
 int list = 0;         /* list the file contents (-l) */
 int verbose = 0;      /* be verbose (-v) */
 int quiet = 0;        /* be very quiet (-q) */
-int do_lzw = 0;       /* generate output compatible with old compress (-Z) */
 int test = 0;         /* test .gz file integrity */
 int foreground;       /* set if program run in foreground */
 char *progname;       /* program name */
-int maxbits = BITS;   /* max bits per code for LZW */
 int method = DEFLATED;/* compression method */
 int level = 6;        /* compression level */
 int exit_code = OK;   /* program exit code */
@@ -363,10 +361,6 @@ local void help()
  " -V --version     display version number",
  " -1 --fast        compress faster",
  " -9 --best        compress better",
-#ifdef LZW
- " -Z --lzw         produce output compatible with old compress",
- " -b --bits maxbits   max number of bits per code (implies -Z)",
-#endif
  " file...          files to (de)compress. If none given, use standard input.",
  "Report bugs to <bug-gzip@gnu.org>.",
   0};
@@ -504,17 +498,6 @@ int main (argc, argv)
 	switch (optc) {
         case 'a':
             ascii = 1; break;
-	case 'b':
-	    maxbits = atoi(optarg);
-	    for (; *optarg; optarg++)
-	      if (! ('0' <= *optarg && *optarg <= '9'))
-		{
-		  fprintf (stderr, "%s: -b operand is not an integer\n",
-			   progname);
-		  usage ();
-		  do_exit (ERROR);
-		}
-	    break;
 	case 'c':
 	    to_stdout = 1; break;
 	case 'd':
@@ -560,14 +543,10 @@ int main (argc, argv)
 	case 'V':
 	    version(); do_exit(OK); break;
 	case 'Z':
-#ifdef LZW
-	    do_lzw = 1; break;
-#else
 	    fprintf(stderr, "%s: -Z not supported in this version\n",
 		    progname);
 	    usage();
 	    do_exit(ERROR); break;
-#endif
 	case '1':  case '2':  case '3':  case '4':
 	case '5':  case '6':  case '7':  case '8':  case '9':
 	    level = optc - '0';
@@ -605,7 +584,6 @@ int main (argc, argv)
                 progname, optarg);
         do_exit(ERROR);
     }
-    if (do_lzw && !decompress) work = lzw;
 
     /* Allocate all global buffers (for DYN_ALLOC option) */
     ALLOC(uch, inbuf,  INBUFSIZ +INBUF_EXTRA);
@@ -1236,37 +1214,6 @@ local int get_method(in)
 	if (part_nb == 1) {
 	    header_bytes = inptr + 2*sizeof(long); /* include crc and size */
 	}
-
-    } else if (memcmp(magic, PKZIP_MAGIC, 2) == 0 && inptr == 2
-	    && memcmp((char*)inbuf, PKZIP_MAGIC, 4) == 0) {
-	/* To simplify the code, we support a zip file when alone only.
-         * We are thus guaranteed that the entire local header fits in inbuf.
-         */
-        inptr = 0;
-	work = unzip;
-	if (check_zipfile(in) != OK) return -1;
-	/* check_zipfile may get ofname from the local header */
-	last_member = 1;
-
-    } else if (memcmp(magic, PACK_MAGIC, 2) == 0) {
-	work = unpack;
-	method = PACKED;
-
-    } else if (memcmp(magic, LZW_MAGIC, 2) == 0) {
-	work = unlzw;
-	method = COMPRESSED;
-	last_member = 1;
-
-    } else if (memcmp(magic, LZH_MAGIC, 2) == 0) {
-	work = unlzh;
-	method = LZHED;
-	last_member = 1;
-
-    } else if (force && to_stdout && !list) { /* pass input unchanged */
-	method = STORED;
-	work = copy;
-        inptr = 0;
-	last_member = 1;
     }
     if (method >= 0) return method;
 
