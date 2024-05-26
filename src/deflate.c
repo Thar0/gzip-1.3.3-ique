@@ -252,9 +252,6 @@ local void fill_window   OF((void));
 local off_t deflate_fast OF((void));
 
       int  longest_match OF((IPos cur_match));
-#ifdef ASMV
-      void match_init OF((void)); /* asm code initialization */
-#endif
 
 #ifdef DEBUG
 local  void check_match OF((IPos start, IPos match, int length));
@@ -318,9 +315,6 @@ void lm_init (pack_level, flags)
 
     strstart = 0;
     block_start = 0L;
-#ifdef ASMV
-    match_init(); /* initialize the asm code */
-#endif
 
     lookahead = file_read((char*)window,
 			 sizeof(int) <= 2 ? (unsigned)WSIZE : 2*WSIZE);
@@ -349,11 +343,6 @@ void lm_init (pack_level, flags)
  * garbage.
  * IN assertions: cur_match is the head of the hash chain for the current
  *   string (strstart) and its distance is <= MAX_DIST, and prev_length >= 1
- */
-#ifndef ASMV
-/* For MSDOS, OS/2 and 386 Unix, an optimized version is in match.asm or
- * match.s. The code is functionally equivalent, so you can use the C version
- * if desired.
  */
 int longest_match(cur_match)
     IPos cur_match;                             /* current match */
@@ -479,7 +468,6 @@ int longest_match(cur_match)
 
     return best_len;
 }
-#endif /* ASMV */
 
 #ifdef DEBUG
 /* ===========================================================================

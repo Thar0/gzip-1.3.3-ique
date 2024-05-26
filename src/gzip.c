@@ -174,10 +174,6 @@ typedef RETSIGTYPE (*sig_type) OF((int));
 #  define CHAR_BIT 8
 #endif
 
-#ifdef off_t
-  off_t lseek OF((int fd, off_t offset, int whence));
-#endif
-
 #ifndef OFF_T_MIN
 #define OFF_T_MIN (~ (off_t) 0 << (sizeof (off_t) * CHAR_BIT - 1))
 #endif
@@ -187,17 +183,16 @@ typedef RETSIGTYPE (*sig_type) OF((int));
 #endif
 
 /* Separator for file name parts (see shorten_name()) */
-#ifdef NO_MULTIPLE_DOTS
-#  define PART_SEP "-"
-#else
-#  define PART_SEP "."
-#endif
+#define PART_SEP "."
 
 		/* global buffers */
 
 DECLARE(uch, inbuf,  INBUFSIZ +INBUF_EXTRA);
 DECLARE(uch, outbuf, OUTBUFSIZ+OUTBUF_EXTRA);
 DECLARE(ush, d_buf,  DIST_BUFSIZE);
+/* XXX 2L*WSIZE -> 3L*WIZE and poking 0xFF makes the
+   insufficient lookahead bug deterministic, matches
+   OoT but may not match other use-cases */
 DECLARE(uch, window, 3L*WSIZE) = { [2L*WSIZE+4] = 0xFF};
 #ifndef MAXSEG_64K
 DECLARE(ush, tab_prefix, 1L<<BITS);
@@ -289,7 +284,6 @@ local char *get_suffix  OF((char *name));
 local int  get_istat    OF((char *iname, struct stat *sbuf));
 local int  make_ofname  OF((void));
 local int  same_file    OF((struct stat *stat1, struct stat *stat2));
-local int name_too_long OF((char *name, struct stat *statb));
 local void shorten_name  OF((char *name));
 local int  get_method   OF((FILE *in));
 local void do_list      OF((FILE *ifd, int method));
@@ -392,18 +386,6 @@ local void version()
 #endif
 #ifdef HAVE_LSTAT
     printf ("HAVE_LSTAT ");
-#endif
-#ifdef NO_MULTIPLE_DOTS
-    printf ("NO_MULTIPLE_DOTS ");
-#endif
-#ifdef HAVE_CHOWN
-    printf ("HAVE_CHOWN ");
-#endif
-#ifdef PROTO
-    printf ("PROTO ");
-#endif
-#ifdef ASMV
-    printf ("ASMV ");
 #endif
 #ifdef DEBUG
     printf ("DEBUG ");
@@ -520,9 +502,6 @@ int main (argc, argv)
 	    recursive = 1; break;
 #endif
 	case 'S':
-#ifdef NO_MULTIPLE_DOTS
-            if (*optarg == '.') optarg++;
-#endif
             z_len = strlen(optarg);
 	    z_suffix = optarg;
             break;
@@ -724,7 +703,7 @@ local void treat_file(iname)
     /* Actually do the compression/decompression. Loop over zipped members.
      */
     for (;;) {
-	if ((*work)(ifd, ofd) != OK) {
+	if (work(ifd, ofd) != OK) {
 	    method = -1; /* force cleanup */
 	    break;
 	}
@@ -779,49 +758,32 @@ local int create_outfile()
     struct stat	ostat; /* stat for ofname */
     const char *mode = (ascii && decompress) ? "w" : "wb";
 
-    for (;;) {
-	/* Make sure that ofname is not an existing file */
-	if (check_ofname() != OK) {
-	    fclose(ifd);
-	    return ERROR;
-	}
-	/* Create the output file */
-	remove_ofname = 1;
-	ofd = fopen(ofname, mode);
-	if (ofd == NULL) {
-	    progerror(ofname);
-	    fclose(ifd);
-	    return ERROR;
-	}
-
-	/* Check for name truncation on new file (1234567890123.gz) */
-#ifdef NO_FSTAT
-	if (stat(ofname, &ostat) != 0) {
-#else
-	if (fstat(fileno(ofd), &ostat) != 0) {
-#endif
-	    progerror(ofname);
-	    fclose(ifd); fclose(ofd);
-	    xunlink (ofname);
-	    return ERROR;
-	}
-	if (!name_too_long(ofname, &ostat)) return OK;
-
-	if (decompress) {
-	    /* name might be too long if an original name was saved */
-	    WARN((stderr, "%s: %s: warning, name truncated\n",
-		  progname, ofname));
-	    return OK;
-	}
-	fclose(ofd);
-	xunlink (ofname);
-#ifdef NO_MULTIPLE_DOTS
-	/* Should never happen, see check_ofname() */
-	fprintf(stderr, "%s: %s: name too long\n", progname, ofname);
-	do_exit(ERROR);
-#endif
-	shorten_name(ofname);
+    /* Make sure that ofname is not an existing file */
+    if (check_ofname() != OK) {
+	fclose(ifd);
+	return ERROR;
     }
+    /* Create the output file */
+    remove_ofname = 1;
+    ofd = fopen(ofname, mode);
+    if (ofd == NULL) {
+	progerror(ofname);
+	fclose(ifd);
+	return ERROR;
+    }
+
+    /* Check for name truncation on new file (1234567890123.gz) */
+#ifdef NO_FSTAT
+    if (stat(ofname, &ostat) != 0) {
+#else
+    if (fstat(fileno(ofd), &ostat) != 0) {
+#endif
+	progerror(ofname);
+	fclose(ifd); fclose(ofd);
+	xunlink (ofname);
+	return ERROR;
+    }
+    return OK;
 }
 
 /* ========================================================================
@@ -912,13 +874,10 @@ local int get_istat(iname, sbuf)
     static char *suffixes[] = {NULL, ".gz", ".z", "-z", ".Z", NULL};
     char **suf = suffixes;
     char *s;
-#ifdef NO_MULTIPLE_DOTS
-    char *dot; /* pointer to ifname extension, or NULL */
-#endif
 
     *suf = z_suffix;
 
-    if (sizeof ifname - 1 <= strlen (iname))
+    if (sizeof (ifname) - 1 <= strlen (iname))
 	goto name_too_long;
 
     strcpy(ifname, iname);
@@ -938,13 +897,6 @@ local int get_istat(iname, sbuf)
 	progerror(ifname); /* ifname already has z suffix and does not exist */
 	return ERROR;
     }
-#ifdef NO_MULTIPLE_DOTS
-    dot = strrchr(ifname, '.');
-    if (dot == NULL) {
-        strcat(ifname, ".");
-        dot = strrchr(ifname, '.');
-    }
-#endif
     ilen = strlen(ifname);
     if (strequ(z_suffix, ".gz")) suf++;
 
@@ -952,15 +904,11 @@ local int get_istat(iname, sbuf)
     do {
         char *s0 = s = *suf;
         strcpy (ifname, iname);
-#ifdef NO_MULTIPLE_DOTS
-        if (*s == '.') s++;
-        if (*dot == '\0') strcpy (dot, ".");
-#endif
 #ifdef MAX_EXT_CHARS
 	if (MAX_EXT_CHARS < strlen (s) + strlen (dot + 1))
 	  dot[MAX_EXT_CHARS + 1 - strlen (s)] = '\0';
 #endif
-	if (sizeof ifname <= ilen + strlen (s))
+	if (sizeof (ifname) <= ilen + strlen (s))
 	  goto name_too_long;
         strcat(ifname, s);
         if (do_stat(ifname, sbuf) == 0) return OK;
@@ -970,9 +918,6 @@ local int get_istat(iname, sbuf)
 
     /* No suffix found, complain using z_suffix: */
     strcpy(ifname, iname);
-#ifdef NO_MULTIPLE_DOTS
-    if (*dot == '\0') strcpy(dot, ".");
-#endif
 #ifdef MAX_EXT_CHARS
     if (MAX_EXT_CHARS < z_len + strlen (dot + 1))
       dot[MAX_EXT_CHARS + 1 - z_len] = '\0';
@@ -1033,30 +978,7 @@ local int make_ofname()
     } else {
         save_orig_name = 0;
 
-#ifdef NO_MULTIPLE_DOTS
-	suff = strrchr(ofname, '.');
-	if (suff == NULL) {
-	    if (sizeof ofname <= strlen (ofname) + 1)
-		goto name_too_long;
-            strcat(ofname, ".");
-#  ifdef MAX_EXT_CHARS
-	    if (strequ(z_suffix, "z")) {
-		if (sizeof ofname <= strlen (ofname) + 2)
-		    goto name_too_long;
-		strcat(ofname, "gz"); /* enough room */
-		return OK;
-	    }
-        /* On the Atari and some versions of MSDOS, name_too_long()
-         * does not work correctly because of a bug in stat(). So we
-         * must truncate here.
-         */
-        } else if (strlen(suff)-1 + z_len > MAX_SUFFIX) {
-            suff[MAX_SUFFIX+1-z_len] = '\0';
-            save_orig_name = 1;
-#  endif
-        }
-#endif /* NO_MULTIPLE_DOTS */
-	if (sizeof ofname <= strlen (ofname) + z_len)
+	if (sizeof (ofname) <= strlen (ofname) + z_len)
 	    goto name_too_long;
 	strcat(ofname, z_suffix);
 
@@ -1103,7 +1025,7 @@ local int get_method(in)
     method = -1;                 /* unknown yet */
     part_nb++;                   /* number of parts in gzip file */
     header_bytes = 0;
-    last_member = RECORD_IO;
+    last_member = 0;
     /* assume multiple members in gzip file except for record oriented I/O */
 
     if (memcmp(magic, GZIP_MAGIC, 2) == 0
@@ -1289,10 +1211,9 @@ local void do_list(ifd, method)
     bytes_out = -1L;
     bytes_in = ifile_size;
 
-#if RECORD_IO == 0
     if (method == DEFLATED && !last_member) {
         /* Get the crc and uncompressed size for gzip'ed (not zip'ed) files.
-         * If the lseek fails, we could use read() to get to the end, but
+         * If the fseek fails, we could use read() to get to the end, but
          * --list is used to get quick results.
          * Use "gunzip < foo.gz | wc -c" to get the uncompressed size if
          * you are not concerned about speed.
@@ -1308,7 +1229,6 @@ local void do_list(ifd, method)
 	    bytes_out = LG(buf+4);
 	}
     }
-#endif /* RECORD_IO */
     date = ctime((time_t*)&time_stamp) + 4; /* skip the day of the week */
     date[12] = '\0';               /* suppress the 1/100sec and the year */
     if (verbose) {
@@ -1354,27 +1274,6 @@ local int same_file(stat1, stat2)
 	&& stat1->st_ctime == stat2->st_ctime
 #endif
 	    ;
-}
-
-/* ========================================================================
- * Return true if a file name is ambiguous because the operating system
- * truncates file names.
- */
-local int name_too_long(name, statb)
-    char *name;           /* file name to check */
-    struct stat *statb;   /* stat buf for this file name */
-{
-    int s = strlen(name);
-    char c = name[s-1];
-    struct stat	tstat; /* stat for truncated name */
-    int res;
-
-    tstat = *statb;      /* Just in case OS does not fill all fields */
-    name[s-1] = '\0';
-    res = stat(name, &tstat) == 0 && same_file(statb, &tstat);
-    name[s-1] = c;
-    Trace((stderr, " too_long(%s) => %d\n", name, res));
-    return res;
 }
 
 /* ========================================================================
@@ -1468,15 +1367,6 @@ local int check_ofname()
 #else
     if (stat(ofname, &ostat) != 0) return 0;
 #endif
-    /* Check for name truncation on existing file. Do this even on systems
-     * defining ENAMETOOLONG, because on most systems the strict Posix
-     * behavior is disabled by default (silent name truncation allowed).
-     */
-    if (!decompress && name_too_long(ofname, &ostat)) {
-	shorten_name(ofname);
-	if (stat(ofname, &ostat) != 0) return 0;
-    }
-
     /* Check that the input and output files are different (could be
      * the same by name truncation or links).
      */

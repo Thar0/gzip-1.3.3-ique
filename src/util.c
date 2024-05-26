@@ -236,25 +236,6 @@ int xunlink (filename)
   return r;
 }
 
-/* ========================================================================
- * Make a file name legal for file systems not allowing file names with
- * multiple dots or starting with a dot (such as MSDOS), by changing
- * all dots except the last one into underlines.  A target dependent
- * function can be used instead of this simple function by defining the macro
- * MAKE_LEGAL_NAME in tailor.h and providing the function in a target
- * dependent module.
- */
-void make_simple_name(name)
-    char *name;
-{
-    char *p = strrchr(name, '.');
-    if (p == NULL) return;
-    if (p == name) p++;
-    do {
-        if (*--p == '.') *p = '_';
-    } while (p != name);
-}
-
 
 #if !defined HAVE_STRING_H && !defined STDC_HEADERS
 

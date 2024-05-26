@@ -47,7 +47,6 @@
 #  define PATH_SEP2 '\\'
 #  define PATH_SEP3 ':'
 #  define MAX_PATH_LEN  128
-#  define NO_MULTIPLE_DOTS
 #  define MAX_EXT_CHARS 3
 #  define Z_SUFFIX "z"
 #  define PROTO
@@ -70,7 +69,6 @@
 #  define PATH_SEP3 ':'
 #  define MAX_PATH_LEN  260
 #  ifdef OS2FAT
-#    define NO_MULTIPLE_DOTS
 #    define MAX_EXT_CHARS 3
 #    define Z_SUFFIX "z"
 #    define casemap(c) tolow(c)
@@ -117,7 +115,6 @@
 #  include <io.h>
 #  include <malloc.h>
 #  ifdef NTFAT
-#    define NO_MULTIPLE_DOTS
 #    define MAX_EXT_CHARS 3
 #    define Z_SUFFIX "z"
 #    define casemap(c) tolow(c) /* Force file names to lower case */
@@ -146,68 +143,6 @@
 #  define fcfree(ptr) free(ptr)
 #endif
 
-#if defined(VAXC) || defined(VMS)
-#  define PATH_SEP ']'
-#  define PATH_SEP2 ':'
-#  define SUFFIX_SEP ';'
-#  define NO_MULTIPLE_DOTS
-#  define Z_SUFFIX "-gz"
-#  define RECORD_IO 1
-#  define casemap(c) tolow(c)
-#  define OS_CODE  0x02
-#  define OPTIONS_VAR "GZIP_OPT"
-#  define STDC_HEADERS
-#  define EXPAND(argc,argv) vms_expand_args(&argc,&argv);
-#  include <file.h>
-#  define unlink delete
-#  ifdef VAXC
-#    include <unixio.h>
-#  else
-#    define HAVE_FCNTL_H
-#  endif
-#endif
-
-#ifdef AMIGA
-#  define PATH_SEP2 ':'
-#  define STDC_HEADERS
-#  define OS_CODE  0x01
-#  define ASMV
-#  ifdef __GNUC__
-#    define HAVE_DIRENT_H
-#    define HAVE_FCNTL_H
-#    define HAVE_UNISTD_H
-#    define HAVE_CHOWN
-#    define HAVE_LSTAT
-#  else /* SASC */
-#    define NO_STDIN_FSTAT
-#    define HAVE_SYS_DIR_H
-#    include <fcntl.h> /* for read() and write() */
-#    define direct dirent
-     extern void _expand_args(int *argc, char ***argv);
-#    define EXPAND(argc,argv) _expand_args(&argc,&argv);
-#    undef  O_BINARY /* disable useless --ascii option */
-#  endif
-#endif
-
-#if defined(ATARI) || defined(atarist)
-#  ifndef STDC_HEADERS
-#    define STDC_HEADERS
-#    define HAVE_UNISTD_H
-#    define HAVE_DIRENT_H
-#  endif
-#  define ASMV
-#  define OS_CODE  0x05
-#  ifdef TOSFS
-#    define PATH_SEP2 '\\'
-#    define PATH_SEP3 ':'
-#    define MAX_PATH_LEN  128
-#    define NO_MULTIPLE_DOTS
-#    define MAX_EXT_CHARS 3
-#    define Z_SUFFIX "z"
-#    define casemap(c) tolow(c) /* Force file names to lower case */
-#  endif
-#endif
-
 #ifdef MACOS
 #  define PATH_SEP ':'
 #  define DYN_ALLOC
@@ -218,21 +153,6 @@
 #  define OS_CODE  0x07
 #  ifdef MPW
 #    define isatty(fd) ((fd) <= 2)
-#  endif
-#endif
-
-#ifdef __50SERIES /* Prime/PRIMOS */
-#  define PATH_SEP '>'
-#  define STDC_HEADERS
-#  define NO_STDIN_FSTAT 
-#  define NO_SIZE_CHECK 
-#  define RECORD_IO  1
-#  define casemap(c)  tolow(c) /* Force file names to lower case */
-#  define put_char(c) put_byte((c) & 0x7F)
-#  define get_char(c) ascii2pascii(get_byte())
-#  define OS_CODE  0x0F    /* temporary, subject to change */
-#  ifdef SIGTERM
-#    undef SIGTERM         /* We don't want a signal handler for SIGTERM */
 #  endif
 #endif
 
@@ -278,11 +198,7 @@
 #endif
 
 #ifndef MAKE_LEGAL_NAME
-#  ifdef NO_MULTIPLE_DOTS
-#    define MAKE_LEGAL_NAME(name)   make_simple_name(name)
-#  else
-#    define MAKE_LEGAL_NAME(name)
-#  endif
+#  define MAKE_LEGAL_NAME(name)
 #endif
 
 #ifndef MIN_PART
@@ -292,10 +208,6 @@
 
 #ifndef EXPAND
 #  define EXPAND(argc,argv)
-#endif
-
-#ifndef RECORD_IO
-#  define RECORD_IO 0
 #endif
 
 #ifndef SET_BINARY_MODE

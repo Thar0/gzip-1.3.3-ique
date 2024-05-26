@@ -76,15 +76,10 @@ int zip(in, out)
 
     (void)deflate();
 
-#if !defined(NO_SIZE_CHECK) && !defined(RECORD_IO)
-  /* Check input size (but not in VMS -- variable record lengths mess it up)
-   * and not on MSDOS -- diet in TSR mode reports an incorrect file size)
-   */
     if (ifile_size != -1L && bytes_in != ifile_size) {
 	fprintf(stderr, "%s: %s: file size changed while zipping\n",
 		progname, ifname);
     }
-#endif
 
     /* Write the crc and uncompressed size */
     put_long(crc);
