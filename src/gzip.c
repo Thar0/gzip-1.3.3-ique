@@ -211,7 +211,6 @@ DECLARE(ush, tab_prefix1, 1L<<(BITS-1));
 int ascii = 0;        /* convert end-of-lines to local OS conventions */
 int to_stdout = 0;    /* output to stdout (-c) */
 int decompress = 0;   /* decompress (-d) */
-int force = 0;        /* don't ask questions, compress links (-f) */
 int no_name = -1;     /* don't save or restore the original file name */
 int no_time = -1;     /* don't save or restore the original file time */
 int recursive = 0;    /* recurse through directories (-r) */
@@ -256,10 +255,7 @@ struct option longopts[] =
     {"stdout",     0, 0, 'c'}, /* write output on standard output */
     {"decompress", 0, 0, 'd'}, /* decompress */
     {"uncompress", 0, 0, 'd'}, /* decompress */
- /* {"encrypt",    0, 0, 'e'},    encrypt */
-    {"force",      0, 0, 'f'}, /* force overwrite of output file */
     {"help",       0, 0, 'h'}, /* give help */
- /* {"pkzip",      0, 0, 'k'},    force output in pkzip format */
     {"list",       0, 0, 'l'}, /* list .gz file contents */
     {"license",    0, 0, 'L'}, /* display software license */
     {"no-name",    0, 0, 'n'}, /* don't save or restore original name & time */
@@ -339,10 +335,7 @@ local void help()
 #endif
  " -c --stdout      write on standard output, keep original files unchanged",
  " -d --decompress  decompress",
-/* -e --encrypt     encrypt */
- " -f --force       force overwrite of output file and compress links",
  " -h --help        give this help",
-/* -k --pkzip       force output in pkzip format */
  " -l --list        list compressed file contents",
  " -L --license     display software license",
 #ifdef UNDOCUMENTED
@@ -502,8 +495,6 @@ int main (argc, argv)
 	    to_stdout = 1; break;
 	case 'd':
 	    decompress = 1; break;
-	case 'f':
-	    force++; break;
 	case 'h': case 'H': case '?':
 	    help(); do_exit(OK); break;
 	case 'l':
@@ -663,7 +654,7 @@ local void treat_file(iname)
 	      progname, ifname));
 	return;
     }
-    if (istat.st_nlink > 1 && !to_stdout && !force) {
+    if (istat.st_nlink > 1 && !to_stdout) {
 	WARN((stderr, "%s: %s has %lu other link%c -- unchanged\n",
 	      progname, ifname, (unsigned long) istat.st_nlink - 1,
 	      istat.st_nlink > 2 ? 's' : ' '));
@@ -847,7 +838,7 @@ local int do_stat(name, sbuf)
 {
     errno = 0;
 #ifdef HAVE_LSTAT
-    if (!to_stdout && !force) {
+    if (!to_stdout) {
 	return lstat(name, sbuf);
     }
 #endif
@@ -1101,10 +1092,10 @@ local int get_method(in)
     int imagic1;   /* like magic[1], but can represent EOF */
     ulg stamp;     /* time stamp */
 
-    /* If --force and --stdout, zcat == cat, so do not complain about
+    /* If --stdout, zcat == cat, so do not complain about
      * premature end of file: use try_byte instead of get_byte.
      */
-    if (force && to_stdout) {
+    if (to_stdout) {
 	magic[0] = (char)try_byte();
 	imagic1 = try_byte ();
 	magic[1] = (char) imagic1;
@@ -1146,14 +1137,14 @@ local int get_method(in)
 		    "%s: %s is a a multi-part gzip file -- not supported\n",
 		    progname, ifname);
 	    exit_code = ERROR;
-	    if (force <= 1) return -1;
+	    return -1;
 	}
 	if ((flags & RESERVED) != 0) {
 	    fprintf(stderr,
 		    "%s: %s has flags 0x%x -- not supported\n",
 		    progname, ifname, flags);
 	    exit_code = ERROR;
-	    if (force <= 1) return -1;
+	    return -1;
 	}
 	stamp  = (ulg)get_byte();
 	stamp |= ((ulg)get_byte()) << 8;
@@ -1501,21 +1492,6 @@ local int check_ofname()
 	}
 	exit_code = ERROR;
 	return ERROR;
-    }
-    /* Ask permission to overwrite the existing file */
-    if (!force) {
-	int ok = 0;
-	fprintf(stderr, "%s: %s already exists;", progname, ofname);
-	if (foreground && isatty(fileno(stdin))) {
-	    fprintf(stderr, " do you wish to overwrite (y or n)? ");
-	    fflush(stderr);
-	    ok = yesno();
-	}
-	if (!ok) {
-	    fprintf(stderr, "\tnot overwritten\n");
-	    if (exit_code == OK) exit_code = WARNING;
-	    return ERROR;
-	}
     }
     if (xunlink (ofname)) {
 	progerror(ofname);

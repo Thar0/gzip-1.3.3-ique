@@ -7,6 +7,7 @@ AR := ar
 CC := gcc
 
 CFLAGS := -O2 -g -ffunction-sections -fdata-sections
+LDFLAGS := -Wl,--gc-sections -Wl,--print-gc-sections
 
 ifeq ($(DEBUG),1)
 CFLAGS += -DDEBUG
@@ -29,5 +30,5 @@ $(BUILD_DIR)/%.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(TARGET): $(O_FILES)
-	$(CC) -Wl,--gc-sections -Wl,--print-gc-sections $^ -o $@
+	$(CC) $(LDFLAGS) $^ -o $@
 #	$(AR) rcs $@ $^
