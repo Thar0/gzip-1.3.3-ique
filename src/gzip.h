@@ -140,8 +140,8 @@ extern off_t header_bytes;/* number of bytes in gzip header */
 
 extern FILE *ifd;       /* input file descriptor */
 extern FILE *ofd;       /* output file descriptor */
-extern char ifname[];   /* input file name or "stdin" */
-extern char ofname[];   /* output file name or "stdout" */
+extern char *ifname;   /* input file name or "stdin" */
+extern char *ofname;   /* output file name or "stdout" */
 extern char *progname;  /* program name */
 
 extern time_t time_stamp; /* original time stamp (modification time) */
