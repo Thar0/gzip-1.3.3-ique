@@ -170,16 +170,16 @@ main(int argc, char **argv)
 #undef arg_error
 
     if (signal(SIGINT, SIG_IGN) != SIG_IGN) {
-	(void) signal (SIGINT, (sig_type)abort_gzip);
+        (void) signal(SIGINT, (sig_type)abort_gzip);
     }
 #ifdef SIGTERM
     if (signal(SIGTERM, SIG_IGN) != SIG_IGN) {
-	(void) signal(SIGTERM, (sig_type)abort_gzip);
+        (void) signal(SIGTERM, (sig_type)abort_gzip);
     }
 #endif
 #ifdef SIGHUP
     if (signal(SIGHUP, SIG_IGN) != SIG_IGN) {
-	(void) signal(SIGHUP,  (sig_type)abort_gzip);
+        (void) signal(SIGHUP,  (sig_type)abort_gzip);
     }
 #endif
 
@@ -202,8 +202,11 @@ main(int argc, char **argv)
     s->ifd = ifile;
     s->ofd = ofile;
 
-    // XXX OoT fix, make the extra window data an argument
-    s->window[2L*WSIZE+4] = 0xFF;
+    // Hack: make oob window reads consistent with original 32-bit gzip binary
+    s->ifd_ = 3;
+    s->z_suffix = 0x08052FB5;
+    s->file_type_ = 0xFFFFD052;
+    s->file_method_ = 0x08054AD0;
 
     size_t fsize;
     __attribute__((unused)) void *idata = util_read_whole_file(ifilename, &fsize);
@@ -237,12 +240,9 @@ int do_compression(gzip_state_t *s) {
     clear_bufs(s);
     s->save_orig_name = 0;
     s->window_size = 2L*WSIZE;
-
-
-    s->l_desc  = (tree_desc){s->dyn_ltree, s->static_ltree, extra_lbits, LITERALS+1, L_CODES, MAX_BITS, 0};
-    s->d_desc  = (tree_desc){s->dyn_dtree, s->static_dtree, extra_dbits, 0,          D_CODES, MAX_BITS, 0};
-    s->bl_desc = (tree_desc){s->bl_tree, (ct_data*)NULL, extra_blbits, 0,      BL_CODES, MAX_BL_BITS, 0};
-
+    s->l_desc  = (tree_desc){ s->dyn_ltree, s->static_ltree, extra_lbits,  LITERALS+1, L_CODES,  MAX_BITS,    0 };
+    s->d_desc  = (tree_desc){ s->dyn_dtree, s->static_dtree, extra_dbits,  0,          D_CODES,  MAX_BITS,    0 };
+    s->bl_desc = (tree_desc){ s->bl_tree,   (ct_data*)NULL,  extra_blbits, 0,          BL_CODES, MAX_BL_BITS, 0 };
 
     int ret = zip(s);
     if (ret != OK)

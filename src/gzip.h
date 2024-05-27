@@ -45,7 +45,7 @@
 
 typedef unsigned char  uch;
 typedef unsigned short ush;
-typedef unsigned long  ulg;
+typedef unsigned int   ulg; // used to be long, but we need it to be consistently 32-bit
 
 /* Return codes from gzip */
 #define OK      0
@@ -114,38 +114,14 @@ typedef unsigned long  ulg;
 #  define FREE(array)
 #endif
 
-// EXTERN(uch, inbuf);          /* input buffer */
-// EXTERN(uch, outbuf);         /* output buffer */
-// EXTERN(ush, d_buf);          /* buffer for distances, see trees.c */
-// EXTERN(uch, window);         /* Sliding window and suffix table (unlzw) */
-// #define tab_suffix window
+#define tab_suffix window
 #ifndef MAXSEG_64K
 #  define tab_prefix prev    /* hash link (see deflate.c) */
 #  define head (s->prev+WSIZE)  /* hash head (see deflate.c) */
-//    EXTERN(ush, tab_prefix);  /* prefix code (see unlzw.c) */
 #else
 #  define tab_prefix0 prev
 #  define head tab_prefix1
-//    EXTERN(ush, tab_prefix0); /* prefix for even codes */
-//    EXTERN(ush, tab_prefix1); /* prefix for odd  codes */
 #endif
-
-// extern unsigned insize; /* valid bytes in inbuf */
-// extern unsigned inptr;  /* index of next byte to be processed in inbuf */
-// extern unsigned outcnt; /* bytes in output buffer */
-
-// extern off_t bytes_in;   /* number of input bytes */
-// extern off_t bytes_out;  /* number of output bytes */
-// extern off_t header_bytes;/* number of bytes in gzip header */
-
-// extern FILE *ifd;       /* input file descriptor */
-// extern FILE *ofd;       /* output file descriptor */
-// extern char *ifname;   /* input file name or "stdin" */
-// extern char *ofname;   /* output file name or "stdout" */
-// extern char *progname;  /* program name */
-
-// extern time_t time_stamp; /* original time stamp (modification time) */
-// extern off_t ifile_size; /* input file size, -1 for devices (debug only) */
 
 typedef FILE* file_t;     /* Do not use stdio */
 #define NO_FILE  (NULL)   /* in memory compression */
@@ -286,6 +262,8 @@ typedef struct tree_desc {
     int     max_code;            /* largest code with non zero frequency */
 } tree_desc;
 
+typedef unsigned int ptr32_t; // pointer emulation
+
 typedef struct
 {
     int         level;
@@ -296,7 +274,6 @@ typedef struct
     int         verbose;        /* be verbose (-v) */
     int         save_orig_name; /* set if original name must be saved */
     unsigned    insize;         /* valid bytes in inbuf */
-    unsigned    inptr;          /* index of next byte to be processed in inbuf */
     unsigned    outcnt;         /* bytes in output buffer */
     off_t       bytes_in;       /* number of input bytes */
     off_t       bytes_out;      /* number of output bytes */
@@ -308,7 +285,20 @@ typedef struct
     uch         inbuf[INBUFSIZ +INBUF_EXTRA];
     uch         outbuf[OUTBUFSIZ+OUTBUF_EXTRA];
     ush         d_buf[DIST_BUFSIZE];
-    uch         window[2L * WSIZE + WSIZE];
+    uch         window[2L * WSIZE];
+    /* Reproduce the memory layout from the original gzip binary for consistent oob window reads */
+    unsigned    inptr;          /* index of next byte to be processed in inbuf */
+    unsigned    ifd_;           // = 3
+    ptr32_t     z_suffix;       // = 0x08052FB5
+    unsigned    bk;             // = 0
+    ulg         bb;             // = 0
+    ptr32_t     file_type_;     // = 0xFFFFD052, might also be 0xBFFFF052 if the top of the stack were 0xC0000000 instead of 0xFFFFE000
+    ptr32_t     file_method_;   // = 0x08054AD0
+    int         decrypt;        // = 0
+    ptr32_t     key;            // = 0
+    unsigned    header_bytes;   /* number of bytes in gzip header */
+    char        END_[0x4000];
+    /* END Reproduce original gzip */
 
 #ifndef MAXSEG_64K
     ush         tab_prefix[1L << BITS];
@@ -488,8 +478,6 @@ typedef struct
 #endif
 
     ulg crc;       /* crc on uncompressed file data */
-    off_t header_bytes;   /* number of bytes in gzip header */
-
     tree_desc l_desc;
     tree_desc d_desc;
     tree_desc bl_desc;
