@@ -7,7 +7,7 @@ AR := ar
 CC := gcc
 
 CFLAGS := -O2 -g -ffunction-sections -fdata-sections -Wall -Wextra
-LDFLAGS := -Wl,--gc-sections -Wl,--print-gc-sections
+LDFLAGS := -Wl,--gc-sections #-Wl,--print-gc-sections
 
 ifeq ($(DEBUG),1)
 CFLAGS += -DDEBUG

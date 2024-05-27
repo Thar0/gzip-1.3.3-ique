@@ -7,10 +7,44 @@
 
 #include "gzip.h"
 
+// Originally from revision.h
+#define VERSION "1.3.3-iQue"
+#define PATCHLEVEL 1
+#define REVDATE "2024-05-27"
+
+static void
+version(const char *progname)
+{
+    static const char *license_msg[] = {
+        "Copyright 2002 Free Software Foundation",
+        "Copyright 1992-1993 Jean-loup Gailly",
+        "This program comes with ABSOLUTELY NO WARRANTY.",
+        "You may redistribute copies of this program",
+        "under the terms of the GNU General Public License.",
+        "For more information about these matters, see the file named COPYING.",
+        NULL,
+    };
+    const char **p = license_msg;
+
+    printf("%s %s\n(%s)\n", progname, VERSION, REVDATE);
+
+    while (*p != NULL)
+        printf("%s\n", *p++);
+    printf("Written by Jean-loup Gailly."       "\n"
+           "iQue matching by cadmic and Tharo"  "\n");
+}
+
 static void
 usage(const char *progname)
 {
-    fprintf(stderr, "Usage: %s [-c] [-n] [-V] [-[0-9]] <ifilename> <ofilename>\n", progname);
+    fprintf(stderr, 
+           "Usage: %s [-V] [-v] [-[0-9]] <ifilename> <ofilename>"   "\n"
+           "        -V: Display version information and exit"       "\n"
+           "        -v: Verbose toggle, debug mode only"            "\n"
+           "        -[0-9]: Compression level, 0=fastest 9=best"    "\n"
+           "        ifilename: Input decompressed file"             "\n"
+           "        ofilename: Output compressed file"              "\n",
+        progname);
     exit(EXIT_FAILURE);
 }
 
@@ -133,17 +167,20 @@ main(int argc, char **argv)
                 continue;
             }
 
-            if (argv[i][1] == 'c') {
+            if (argv[i][1] == 'n') {
+                // Ignored, always TRUE
                 continue;
             }
 
-            if (argv[i][1] == 'n') {
+            if (argv[i][1] == 'v') {
+                verbose = 1;
                 continue;
             }
 
             if (argv[i][1] == 'V') {
-                verbose = 1;
-                continue;
+                version(argv[0]);
+                do_exit(OK);
+                break;
             }
 
             arg_error("Unknown option \"%s\"", argv[i]);
