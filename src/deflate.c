@@ -66,7 +66,6 @@
 
 #include "tailor.h"
 #include "gzip.h"
-#include "deflate.h"
 
 #ifdef RCSID
 static char rcsid[] = "$Id: deflate.c,v 0.15 1993/06/24 10:53:53 jloup Exp $";
@@ -132,77 +131,6 @@ typedef unsigned IPos;
  * save space in the various tables. IPos is used only for parameter passing.
  */
 
-/* DECLARE(uch, window, 2L*WSIZE); */
-/* Sliding window. Input bytes are read into the second half of the window,
- * and move to the first half later to keep a dictionary of at least WSIZE
- * bytes. With this organization, matches are limited to a distance of
- * WSIZE-MAX_MATCH bytes, but this ensures that IO is always
- * performed with a length multiple of the block size. Also, it limits
- * the window size to 64K, which is quite useful on MSDOS.
- * To do: limit the window size to WSIZE+BSZ if SMALL_MEM (the code would
- * be less efficient).
- */
-
-/* DECLARE(Pos, prev, WSIZE); */
-/* Link to older string with same hash index. To limit the size of this
- * array to 64K, this link is maintained only for the last 32K strings.
- * An index in this array is thus a window index modulo 32K.
- */
-
-/* DECLARE(Pos, head, 1<<HASH_BITS); */
-/* Heads of the hash chains or NIL. */
-
-ulg window_size = (ulg)2*WSIZE;
-/* window size, 2*WSIZE except for MMAP or BIG_MEM, where it is the
- * input file length plus MIN_LOOKAHEAD.
- */
-
-long block_start;
-/* window position at the beginning of the current output block. Gets
- * negative when the window is moved backwards.
- */
-
-local unsigned ins_h;  /* hash index of string to be inserted */
-
-#define H_SHIFT  ((HASH_BITS+MIN_MATCH-1)/MIN_MATCH)
-/* Number of bits by which ins_h and del_h must be shifted at each
- * input step. It must be such that after MIN_MATCH steps, the oldest
- * byte no longer takes part in the hash key, that is:
- *   H_SHIFT * MIN_MATCH >= HASH_BITS
- */
-
-unsigned int near prev_length;
-/* Length of the best match at previous step. Matches not greater than this
- * are discarded. This is used in the lazy match evaluation.
- */
-
-      unsigned near strstart;      /* start of string to insert */
-      unsigned near match_start;   /* start of matching string */
-local int           eofile;        /* flag set at end of input file */
-local unsigned      lookahead;     /* number of valid bytes ahead in window */
-
-unsigned near max_chain_length;
-/* To speed up deflation, hash chains are never searched beyond this length.
- * A higher limit improves compression ratio but degrades the speed.
- */
-
-local unsigned int max_lazy_match;
-/* Attempt to find a better match only when the current match is strictly
- * smaller than this value. This mechanism is used only for compression
- * levels >= 4.
- */
-#define max_insert_length  max_lazy_match
-/* Insert new strings in the hash table only if the match length
- * is not greater than this length. This saves time but degrades compression.
- * max_insert_length is used only for compression levels <= 3.
- */
-
-local int compr_level;
-/* compression level (1..9) */
-
-unsigned near good_match;
-/* Use a faster search when the previous match is longer than this */
-
 
 /* Values for max_lazy_match, good_match and max_chain_length, depending on
  * the desired pack level (0..9). The values given below have been tuned to
@@ -216,12 +144,6 @@ typedef struct config {
    ush nice_length; /* quit search above this match length */
    ush max_chain;
 } config;
-
-#ifdef  FULL_SEARCH
-# define nice_match MAX_MATCH
-#else
-  int near nice_match; /* Stop searching when current match exceeds this */
-#endif
 
 local config configuration_table[10] = {
 /*      good lazy nice chain */
@@ -248,13 +170,13 @@ local config configuration_table[10] = {
 /* ===========================================================================
  *  Prototypes for local functions.
  */
-local void fill_window   OF((void));
-local off_t deflate_fast OF((void));
+local void fill_window   OF((gzip_state_t *s));
+local off_t deflate_fast OF((gzip_state_t *s));
 
-      int  longest_match OF((IPos cur_match));
+      int  longest_match OF((gzip_state_t *s, IPos cur_match));
 
 #ifdef DEBUG
-local  void check_match OF((IPos start, IPos match, int length));
+local  void check_match OF((gzip_state_t *s, IPos start, IPos match, int length));
 #endif
 
 /* ===========================================================================
@@ -273,22 +195,23 @@ local  void check_match OF((IPos start, IPos match, int length));
  *    input characters and the first MIN_MATCH bytes of s are valid
  *    (except for the last MIN_MATCH-1 bytes of the input file).
  */
-#define INSERT_STRING(s, match_head) \
-   (UPDATE_HASH(ins_h, window[(s) + MIN_MATCH-1]), \
-    prev[(s) & WMASK] = match_head = head[ins_h], \
-    head[ins_h] = (s))
+#define INSERT_STRING(s, strstart, match_head) \
+   (UPDATE_HASH(s->ins_h, s->window[(strstart) + MIN_MATCH-1]), \
+    s->prev[(strstart) & WMASK] = match_head = head[s->ins_h], \
+    head[s->ins_h] = (strstart))
 
 /* ===========================================================================
  * Initialize the "longest match" routines for a new file
  */
-void lm_init (pack_level, flags)
+void lm_init (s, pack_level, flags)
+    gzip_state_t *s;
     int pack_level; /* 0: store, 1: best speed, 9: best compression */
     ush *flags;     /* general purpose bit flag */
 {
     register unsigned j;
 
-    if (pack_level < 1 || pack_level > 9) error("bad pack level");
-    compr_level = pack_level;
+    if (pack_level < 1 || pack_level > 9) error(s, "bad pack level");
+    s->compr_level = pack_level;
 
     /* Initialize the hash table. */
 #if defined(MAXSEG_64K) && HASH_BITS == 15
@@ -300,12 +223,12 @@ void lm_init (pack_level, flags)
 
     /* Set the default configuration parameters:
      */
-    max_lazy_match   = configuration_table[pack_level].max_lazy;
-    good_match       = configuration_table[pack_level].good_length;
+    s->max_lazy_match   = configuration_table[pack_level].max_lazy;
+    s->good_match       = configuration_table[pack_level].good_length;
 #ifndef FULL_SEARCH
-    nice_match       = configuration_table[pack_level].nice_length;
+    s->nice_match       = configuration_table[pack_level].nice_length;
 #endif
-    max_chain_length = configuration_table[pack_level].max_chain;
+    s->max_chain_length = configuration_table[pack_level].max_chain;
     if (pack_level == 1) {
        *flags |= FAST;
     } else if (pack_level == 9) {
@@ -313,24 +236,24 @@ void lm_init (pack_level, flags)
     }
     /* ??? reduce max_chain_length for binary files */
 
-    strstart = 0;
-    block_start = 0L;
+    s->strstart = 0;
+    s->block_start = 0L;
 
-    lookahead = file_read((char*)window,
+    s->lookahead = file_read(s, (char*)s->window,
 			 sizeof(int) <= 2 ? (unsigned)WSIZE : 2*WSIZE);
 
-    if (lookahead == 0 || lookahead == (unsigned)EOF) {
-       eofile = 1, lookahead = 0;
+    if (s->lookahead == 0 || s->lookahead == (unsigned)EOF) {
+       s->eofile = 1, s->lookahead = 0;
        return;
     }
-    eofile = 0;
+    s->eofile = 0;
     /* Make sure that we always have enough lookahead. This is important
      * if input comes from a device such as a tty.
      */
-    while (lookahead < MIN_LOOKAHEAD && !eofile) fill_window();
+    while (s->lookahead < MIN_LOOKAHEAD && !s->eofile) fill_window(s);
 
-    ins_h = 0;
-    for (j=0; j<MIN_MATCH-1; j++) UPDATE_HASH(ins_h, window[j]);
+    s->ins_h = 0;
+    for (j=0; j<MIN_MATCH-1; j++) UPDATE_HASH(s->ins_h, s->window[j]);
     /* If lookahead < MIN_MATCH, ins_h is garbage, but this is
      * not important since only literal bytes will be emitted.
      */
@@ -344,15 +267,16 @@ void lm_init (pack_level, flags)
  * IN assertions: cur_match is the head of the hash chain for the current
  *   string (strstart) and its distance is <= MAX_DIST, and prev_length >= 1
  */
-int longest_match(cur_match)
+int longest_match(s, cur_match)
+    gzip_state_t *s;
     IPos cur_match;                             /* current match */
 {
-    unsigned chain_length = max_chain_length;   /* max hash chain length */
-    register uch *scan = window + strstart;     /* current string */
+    unsigned chain_length = s->max_chain_length;   /* max hash chain length */
+    register uch *scan = s->window + s->strstart;  /* current string */
     register uch *match;                        /* matched string */
     register int len;                           /* length of current match */
-    int best_len = prev_length;                 /* best match length so far */
-    IPos limit = strstart > (IPos)MAX_DIST ? strstart - (IPos)MAX_DIST : NIL;
+    int best_len = s->prev_length;                 /* best match length so far */
+    IPos limit = s->strstart > (IPos)MAX_DIST ? s->strstart - (IPos)MAX_DIST : NIL;
     /* Stop when cur_match becomes <= limit. To simplify the code,
      * we prevent matches with the string of window index 0.
      */
@@ -368,24 +292,24 @@ int longest_match(cur_match)
     /* Compare two bytes at a time. Note: this is not always beneficial.
      * Try with and without -DUNALIGNED_OK to check.
      */
-    register uch *strend = window + strstart + MAX_MATCH - 1;
+    register uch *strend = s->window + s->strstart + MAX_MATCH - 1;
     register ush scan_start = *(ush*)scan;
     register ush scan_end   = *(ush*)(scan+best_len-1);
 #else
-    register uch *strend = window + strstart + MAX_MATCH;
+    register uch *strend = s->window + s->strstart + MAX_MATCH;
     register uch scan_end1  = scan[best_len-1];
     register uch scan_end   = scan[best_len];
 #endif
 
     /* Do not waste too much time if we already have a good match: */
-    if (prev_length >= good_match) {
+    if (s->prev_length >= s->good_match) {
         chain_length >>= 2;
     }
     // Assert(strstart <= window_size-MIN_LOOKAHEAD, "insufficient lookahead");
 
     do {
-        Assert(cur_match < strstart, "no future");
-        match = window + cur_match;
+        Assert(cur_match < s->strstart, "no future");
+        match = s->window + cur_match;
 
         /* Skip to next match if the match length cannot increase
          * or if the match length is less than 2:
@@ -453,9 +377,9 @@ int longest_match(cur_match)
 #endif /* UNALIGNED_OK */
 
         if (len > best_len) {
-            match_start = cur_match;
+            s->match_start = cur_match;
             best_len = len;
-            if (len >= nice_match) break;
+            if (len >= s->nice_match) break;
 #ifdef UNALIGNED_OK
             scan_end = *(ush*)(scan+best_len-1);
 #else
@@ -463,7 +387,7 @@ int longest_match(cur_match)
             scan_end   = scan[best_len];
 #endif
         }
-    } while ((cur_match = prev[cur_match & WMASK]) > limit
+    } while ((cur_match = s->prev[cur_match & WMASK]) > limit
 	     && --chain_length != 0);
 
     return best_len;
@@ -473,25 +397,26 @@ int longest_match(cur_match)
 /* ===========================================================================
  * Check that the match at match_start is indeed a match.
  */
-local void check_match(start, match, length)
+local void check_match(s, start, match, length)
+    gzip_state_t *s;
     IPos start, match;
     int length;
 {
     /* check that the match is indeed a match */
-    if (memcmp((char*)window + match,
-                (char*)window + start, length) != EQUAL) {
+    if (memcmp((char*)s->window + match,
+                (char*)s->window + start, length) != EQUAL) {
         fprintf(stderr,
             " start %d, match %d, length %d\n",
             start, match, length);
-        error("invalid match");
+        error(s, "invalid match");
     }
-    if (verbose > 1) {
+    if (s->verbose > 1) {
         fprintf(stderr,"\\[%d,%d]", start-match, length);
-        do { putc(window[start++], stderr); } while (--length != 0);
+        do { putc(s->window[start++], stderr); } while (--length != 0);
     }
 }
 #else
-#  define check_match(start, match, length)
+#  define check_match(s, start, match, length)
 #endif
 
 /* ===========================================================================
@@ -502,10 +427,11 @@ local void check_match(start, match, length)
  *    file reads are performed for at least two bytes (required for the
  *    translate_eol option).
  */
-local void fill_window()
+local void fill_window(s)
+    gzip_state_t *s;
 {
     register unsigned n, m;
-    unsigned more = (unsigned)(window_size - (ulg)lookahead - (ulg)strstart);
+    unsigned more = (unsigned)(s->window_size - (ulg)s->lookahead - (ulg)s->strstart);
     /* Amount of free space at the end of the window. */
 
     /* If the window is almost full and there is insufficient lookahead,
@@ -516,25 +442,25 @@ local void fill_window()
          * and lookahead == 1 (input done one byte at time)
          */
         more--;
-    } else if (strstart >= WSIZE+MAX_DIST) {
+    } else if (s->strstart >= WSIZE+MAX_DIST) {
         /* By the IN assertion, the window is not empty so we can't confuse
          * more == 0 with more == 64K on a 16 bit machine.
          */
-        Assert(window_size == (ulg)2*WSIZE, "no sliding with BIG_MEM");
+        Assert(s->window_size == (ulg)2*WSIZE, "no sliding with BIG_MEM");
 
-        memcpy((char*)window, (char*)window+WSIZE, (unsigned)WSIZE);
-        match_start -= WSIZE;
-        strstart    -= WSIZE; /* we now have strstart >= MAX_DIST: */
+        memcpy((char*)s->window, (char*)s->window+WSIZE, (unsigned)WSIZE);
+        s->match_start -= WSIZE;
+        s->strstart    -= WSIZE; /* we now have strstart >= MAX_DIST: */
 
-        block_start -= (long) WSIZE;
+        s->block_start -= (long) WSIZE;
 
         for (n = 0; n < HASH_SIZE; n++) {
             m = head[n];
             head[n] = (Pos)(m >= WSIZE ? m-WSIZE : NIL);
         }
         for (n = 0; n < WSIZE; n++) {
-            m = prev[n];
-            prev[n] = (Pos)(m >= WSIZE ? m-WSIZE : NIL);
+            m = s->prev[n];
+            s->prev[n] = (Pos)(m >= WSIZE ? m-WSIZE : NIL);
             /* If n is not on any hash chain, prev[n] is garbage but
              * its value will never be used.
              */
@@ -542,12 +468,12 @@ local void fill_window()
         more += WSIZE;
     }
     /* At this point, more >= 2 */
-    if (!eofile) {
-        n = file_read((char*)window+strstart+lookahead, more);
+    if (!s->eofile) {
+        n = file_read(s, (char*)s->window+s->strstart+s->lookahead, more);
         if (n == 0 || n == (unsigned)EOF) {
-            eofile = 1;
+            s->eofile = 1;
         } else {
-            lookahead += n;
+            s->lookahead += n;
         }
     }
 }
@@ -556,9 +482,9 @@ local void fill_window()
  * Flush the current block, with given end-of-file flag.
  * IN assertion: strstart is set to the end of the current match.
  */
-#define FLUSH_BLOCK(eof) \
-   flush_block(block_start >= 0L ? (char*)&window[(unsigned)block_start] : \
-                (char*)NULL, (long)strstart - block_start, (eof))
+#define FLUSH_BLOCK(s, eof) \
+   flush_block(s, s->block_start >= 0L ? (char*)&s->window[(unsigned)s->block_start] : \
+                (char*)NULL, (long)s->strstart - s->block_start, (eof))
 
 /* ===========================================================================
  * Processes a new input file and return its compressed length. This
@@ -566,80 +492,81 @@ local void fill_window()
  * new strings in the dictionary only for unmatched strings or for short
  * matches. It is used only for the fast compression options.
  */
-local off_t deflate_fast()
+local off_t deflate_fast(s)
+    gzip_state_t *s;
 {
     IPos hash_head; /* head of the hash chain */
     int flush;      /* set if current block must be flushed */
     unsigned match_length = 0;  /* length of best match */
 
-    prev_length = MIN_MATCH-1;
-    while (lookahead != 0) {
+    s->prev_length = MIN_MATCH-1;
+    while (s->lookahead != 0) {
         /* Insert the string window[strstart .. strstart+2] in the
          * dictionary, and set hash_head to the head of the hash chain:
          */
-        INSERT_STRING(strstart, hash_head);
+        INSERT_STRING(s, s->strstart, hash_head);
 
         /* Find the longest match, discarding those <= prev_length.
          * At this point we have always match_length < MIN_MATCH
          */
-        if (hash_head != NIL && strstart - hash_head <= MAX_DIST) {
+        if (hash_head != NIL && s->strstart - hash_head <= MAX_DIST) {
             /* To simplify the code, we prevent matches with the string
              * of window index 0 (in particular we have to avoid a match
              * of the string with itself at the start of the input file).
              */
-            match_length = longest_match (hash_head);
+            match_length = longest_match (s, hash_head);
             /* longest_match() sets match_start */
-            if (match_length > lookahead) match_length = lookahead;
+            if (match_length > s->lookahead) match_length = s->lookahead;
         }
         if (match_length >= MIN_MATCH) {
-            check_match(strstart, match_start, match_length);
+            check_match(s, s->strstart, s->match_start, match_length);
 
-            flush = ct_tally(strstart-match_start, match_length - MIN_MATCH);
+            flush = ct_tally(s, s->strstart-s->match_start, match_length - MIN_MATCH);
 
-            lookahead -= match_length;
+            s->lookahead -= match_length;
 
 	    /* Insert new strings in the hash table only if the match length
              * is not too large. This saves time but degrades compression.
              */
-            if (match_length <= max_insert_length) {
+            if (match_length <= s->max_insert_length) {
                 match_length--; /* string at strstart already in hash table */
                 do {
-                    strstart++;
-                    INSERT_STRING(strstart, hash_head);
+                    s->strstart++;
+                    INSERT_STRING(s, s->strstart, hash_head);
                     /* strstart never exceeds WSIZE-MAX_MATCH, so there are
                      * always MIN_MATCH bytes ahead. If lookahead < MIN_MATCH
                      * these bytes are garbage, but it does not matter since
                      * the next lookahead bytes will be emitted as literals.
                      */
                 } while (--match_length != 0);
-	        strstart++; 
+	        s->strstart++; 
             } else {
-	        strstart += match_length;
+	        s->strstart += match_length;
 	        match_length = 0;
-	        ins_h = window[strstart];
-	        UPDATE_HASH(ins_h, window[strstart+1]);
+	        s->ins_h = s->window[s->strstart];
+	        UPDATE_HASH(s->ins_h, s->window[s->strstart+1]);
 #if MIN_MATCH != 3
                 Call UPDATE_HASH() MIN_MATCH-3 more times
 #endif
             }
         } else {
             /* No match, output a literal byte */
-            Tracevv((stderr,"%c",window[strstart]));
-            flush = ct_tally (0, window[strstart]);
-            lookahead--;
-	    strstart++; 
+            Tracevv((stderr,"%c",s->window[s->strstart]));
+            flush = ct_tally (s, 0, s->window[s->strstart]);
+            s->lookahead--;
+	    s->strstart++; 
         }
-        if (flush) FLUSH_BLOCK(0), block_start = strstart;
+        if (flush) FLUSH_BLOCK(s, 0), s->block_start = s->strstart;
 
         /* Make sure that we always have enough lookahead, except
          * at the end of the input file. We need MAX_MATCH bytes
          * for the next match, plus MIN_MATCH bytes to insert the
          * string following the next match.
          */
-        while (lookahead < MIN_LOOKAHEAD && !eofile) fill_window();
+        while (s->lookahead < MIN_LOOKAHEAD && !s->eofile) fill_window(s);
 
     }
-    return FLUSH_BLOCK(1); /* eof */
+    return FLUSH_BLOCK(s, 1); /* eof */
 }
 
 /* ===========================================================================
@@ -647,7 +574,8 @@ local off_t deflate_fast()
  * evaluation for matches: a match is finally adopted only if there is
  * no better match at the next window position.
  */
-off_t deflate()
+off_t deflate(s)
+    gzip_state_t *s;
 {
     IPos hash_head;          /* head of hash chain */
     IPos prev_match;         /* previous match */
@@ -655,33 +583,33 @@ off_t deflate()
     int match_available = 0; /* set if previous match exists */
     register unsigned match_length = MIN_MATCH-1; /* length of best match */
 
-    if (compr_level <= 3) return deflate_fast(); /* optimized for speed */
+    if (s->compr_level <= 3) return deflate_fast(s); /* optimized for speed */
 
     /* Process the input block. */
-    while (lookahead != 0) {
+    while (s->lookahead != 0) {
         /* Insert the string window[strstart .. strstart+2] in the
          * dictionary, and set hash_head to the head of the hash chain:
          */
-        INSERT_STRING(strstart, hash_head);
+        INSERT_STRING(s, s->strstart, hash_head);
 
         /* Find the longest match, discarding those <= prev_length.
          */
-        prev_length = match_length, prev_match = match_start;
+        s->prev_length = match_length, prev_match = s->match_start;
         match_length = MIN_MATCH-1;
 
-        if (hash_head != NIL && prev_length < max_lazy_match &&
-            strstart - hash_head <= MAX_DIST /* &&
+        if (hash_head != NIL && s->prev_length < s->max_lazy_match &&
+            s->strstart - hash_head <= MAX_DIST /* &&
             strstart <= window_size - MIN_LOOKAHEAD */) {
             /* To simplify the code, we prevent matches with the string
              * of window index 0 (in particular we have to avoid a match
              * of the string with itself at the start of the input file).
              */
-            match_length = longest_match (hash_head);
+            match_length = longest_match (s, hash_head);
             /* longest_match() sets match_start */
-            if (match_length > lookahead) match_length = lookahead;
+            if (match_length > s->lookahead) match_length = s->lookahead;
 
             /* Ignore a length 3 match if it is too distant: */
-            if (match_length == MIN_MATCH && strstart-match_start > TOO_FAR){
+            if (match_length == MIN_MATCH && s->strstart-s->match_start > TOO_FAR){
                 /* If prev_match is also MIN_MATCH, match_start is garbage
                  * but we will ignore the current match anyway.
                  */
@@ -691,60 +619,60 @@ off_t deflate()
         /* If there was a match at the previous step and the current
          * match is not better, output the previous match:
          */
-        if (prev_length >= MIN_MATCH && match_length <= prev_length) {
+        if (s->prev_length >= MIN_MATCH && match_length <= s->prev_length) {
 
-            check_match(strstart-1, prev_match, prev_length);
+            check_match(s, s->strstart-1, prev_match, s->prev_length);
 
-            flush = ct_tally(strstart-1-prev_match, prev_length - MIN_MATCH);
+            flush = ct_tally(s, s->strstart-1-prev_match, s->prev_length - MIN_MATCH);
 
             /* Insert in hash table all strings up to the end of the match.
              * strstart-1 and strstart are already inserted.
              */
-            lookahead -= prev_length-1;
-            prev_length -= 2;
+            s->lookahead -= s->prev_length-1;
+            s->prev_length -= 2;
             do {
-                strstart++;
-                INSERT_STRING(strstart, hash_head);
+                s->strstart++;
+                INSERT_STRING(s, s->strstart, hash_head);
                 /* strstart never exceeds WSIZE-MAX_MATCH, so there are
                  * always MIN_MATCH bytes ahead. If lookahead < MIN_MATCH
                  * these bytes are garbage, but it does not matter since the
                  * next lookahead bytes will always be emitted as literals.
                  */
-            } while (--prev_length != 0);
+            } while (--s->prev_length != 0);
             match_available = 0;
             match_length = MIN_MATCH-1;
-            strstart++;
-            if (flush) FLUSH_BLOCK(0), block_start = strstart;
+            s->strstart++;
+            if (flush) FLUSH_BLOCK(s, 0), s->block_start = s->strstart;
 
         } else if (match_available) {
             /* If there was no match at the previous position, output a
              * single literal. If there was a match but the current match
              * is longer, truncate the previous match to a single literal.
              */
-            Tracevv((stderr,"%c",window[strstart-1]));
-            if (ct_tally (0, window[strstart-1])) {
-                FLUSH_BLOCK(0), block_start = strstart;
+            Tracevv((stderr,"%c",s->window[s->strstart-1]));
+            if (ct_tally (s, 0, s->window[s->strstart-1])) {
+                FLUSH_BLOCK(s, 0), s->block_start = s->strstart;
             }
-            strstart++;
-            lookahead--;
+            s->strstart++;
+            s->lookahead--;
         } else {
             /* There is no previous match to compare with, wait for
              * the next step to decide.
              */
             match_available = 1;
-            strstart++;
-            lookahead--;
+            s->strstart++;
+            s->lookahead--;
         }
-        Assert (strstart <= bytes_in && lookahead <= bytes_in, "a bit too far");
+        Assert (s->strstart <= s->bytes_in && s->lookahead <= s->bytes_in, "a bit too far");
 
         /* Make sure that we always have enough lookahead, except
          * at the end of the input file. We need MAX_MATCH bytes
          * for the next match, plus MIN_MATCH bytes to insert the
          * string following the next match.
          */
-        while (lookahead < MIN_LOOKAHEAD && !eofile) fill_window();
+        while (s->lookahead < MIN_LOOKAHEAD && !s->eofile) fill_window(s);
     }
-    if (match_available) ct_tally (0, window[strstart-1]);
+    if (match_available) ct_tally (s, 0, s->window[s->strstart-1]);
 
-    return FLUSH_BLOCK(1); /* eof */
+    return FLUSH_BLOCK(s, 1); /* eof */
 }

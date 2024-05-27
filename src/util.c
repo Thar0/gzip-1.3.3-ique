@@ -12,25 +12,12 @@ static char rcsid[] = "$Id: util.c,v 0.15 1993/06/15 09:04:13 jloup Exp $";
 #include "config.h"
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdlib.h>
 
 #include "tailor.h"
-
-#ifdef HAVE_LIMITS_H
-#  include <limits.h>
-#endif
-#ifdef HAVE_UNISTD_H
-#  include <unistd.h>
-#endif
-#ifdef HAVE_FCNTL_H
-#  include <fcntl.h>
-#endif
-
-#if defined STDC_HEADERS || defined HAVE_STDLIB_H
-#  include <stdlib.h>
-#else
-   extern int errno;
-#endif
-
 #include "gzip.h"
 #include "crypt.h"
 
@@ -38,7 +25,7 @@ static char rcsid[] = "$Id: util.c,v 0.15 1993/06/15 09:04:13 jloup Exp $";
 #  define CHAR_BIT 8
 #endif
 
-extern ulg crc_32_tab[];   /* crc table, defined below */
+extern const ulg crc_32_tab[];   /* crc table, defined below */
 
 /* ===========================================================================
  * Run a set of bytes through the crc shift register.  If s is a NULL
@@ -68,31 +55,32 @@ ulg updcrc(s, n)
 /* ===========================================================================
  * Clear input and output buffers
  */
-void clear_bufs()
+void clear_bufs(gzip_state_t *s)
 {
-    outcnt = 0;
-    insize = inptr = 0;
-    bytes_in = bytes_out = 0L;
+    s->outcnt = 0;
+    s->insize = s->inptr = 0;
+    s->bytes_in = s->bytes_out = 0L;
 }
 
 /* ===========================================================================
  * Write the output buffer outbuf[0..outcnt-1] and update bytes_out.
  * (used for the compressed data only)
  */
-void flush_outbuf()
+void flush_outbuf(gzip_state_t *s)
 {
-    if (outcnt == 0) return;
+    if (s->outcnt == 0) return;
 
-    write_buf(ofd, (char *)outbuf, outcnt);
-    bytes_out += (off_t)outcnt;
-    outcnt = 0;
+    write_buf(s, s->ofd, (char *)s->outbuf, s->outcnt);
+    s->bytes_out += (off_t)s->outcnt;
+    s->outcnt = 0;
 }
 
 /* ===========================================================================
  * Does the same as write(), but also handles partial pipe writes and checks
  * for error return.
  */
-void write_buf(fd, buf, cnt)
+void write_buf(s, fd, buf, cnt)
+    gzip_state_t *s;
     FILE     *fd;
     voidp     buf;
     unsigned  cnt;
@@ -101,7 +89,7 @@ void write_buf(fd, buf, cnt)
 
     while ((n = fwrite(buf, 1, cnt, fd)) != cnt) {
 	if (n == (unsigned)(-1)) {
-	    write_error();
+	    write_error(s);
 	}
 	cnt -= n;
 	buf = (voidp)((char*)buf+n);
@@ -225,38 +213,42 @@ int strcspn(s, reject)
 /* ========================================================================
  * Error handlers.
  */
-void error(m)
+void error(s, m)
+    gzip_state_t *s;
     char *m;
 {
-    fprintf(stderr, "\n%s: %s: %s\n", progname, ifname, m);
+    fprintf(stderr, "\n%s: %s: %s\n", s->progname, s->ifname, m);
     abort_gzip();
 }
 
-void warning (m)
+void warning (s, m)
+    gzip_state_t *s;
     char *m;
 {
-    WARN ((stderr, "%s: %s: warning: %s\n", progname, ifname, m));
+    WARN ((stderr, "%s: %s: warning: %s\n", s->progname, s->ifname, m));
 }
 
-void read_error()
+void read_error(s)
+    gzip_state_t *s;
 {
     int e = errno;
-    fprintf(stderr, "\n%s: ", progname);
+    fprintf(stderr, "\n%s: ", s->progname);
     if (e != 0) {
 	errno = e;
-	perror(ifname);
+	perror(s->ifname);
     } else {
-	fprintf(stderr, "%s: unexpected end of file\n", ifname);
+	fprintf(stderr, "%s: unexpected end of file\n", s->ifname);
     }
     abort_gzip();
 }
 
-void write_error()
+void write_error(s)
+    gzip_state_t *s;
 {
     int e = errno;
-    fprintf(stderr, "\n%s: ", progname);
+    fprintf(stderr, "\n%s: ", s->progname);
     errno = e;
-    perror(ofname);
+    perror(s->ofname);
     abort_gzip();
 }
 
@@ -274,7 +266,7 @@ void display_ratio(num, den, file)
 /* ========================================================================
  * Table of CRC-32's of all single-byte values (made by makecrc.c)
  */
-ulg crc_32_tab[] = {
+const ulg crc_32_tab[] = {
   0x00000000L, 0x77073096L, 0xee0e612cL, 0x990951baL, 0x076dc419L,
   0x706af48fL, 0xe963a535L, 0x9e6495a3L, 0x0edb8832L, 0x79dcb8a4L,
   0xe0d5e91eL, 0x97d2d988L, 0x09b64c2bL, 0x7eb17cbdL, 0xe7b82d07L,

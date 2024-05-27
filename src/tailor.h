@@ -223,5 +223,5 @@
 #endif
 
 #ifndef put_char
-#  define put_char(c) put_byte(c)
+#  define put_char(s, c) put_byte(s, c)
 #endif

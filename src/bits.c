@@ -54,7 +54,6 @@
 #include "config.h"
 #include "tailor.h"
 #include "gzip.h"
-#include "crypt.h"
 
 #ifdef DEBUG
 #  include <stdio.h>
@@ -65,41 +64,17 @@ static char rcsid[] = "$Id: bits.c,v 0.9 1993/06/11 10:16:58 jloup Exp $";
 #endif
 
 /* ===========================================================================
- * Local data used by the "bit string" routines.
- */
-
-local file_t zfile; /* output gzip file */
-
-local unsigned short bi_buf;
-/* Output buffer. bits are inserted starting at the bottom (least significant
- * bits).
- */
-
-#define Buf_size (8 * 2*sizeof(char))
-/* Number of bits used within bi_buf. (bi_buf might be implemented on
- * more than 16 bits on some systems.)
- */
-
-local int bi_valid;
-/* Number of valid bits in bi_buf.  All bits above the last valid bit
- * are always zero.
- */
-
-#ifdef DEBUG
-  off_t bits_sent;   /* bit length of the compressed data */
-#endif
-
-/* ===========================================================================
  * Initialize the bit string routines.
  */
-void bi_init (zipfile)
+void bi_init (s, zipfile)
+    gzip_state_t *s;
     file_t zipfile; /* output zip file, NO_FILE for in-memory compression */
 {
-    zfile  = zipfile;
-    bi_buf = 0;
-    bi_valid = 0;
+    s->zfile  = zipfile;
+    s->bi_buf = 0;
+    s->bi_valid = 0;
 #ifdef DEBUG
-    bits_sent = 0L;
+    s->bits_sent = 0L;
 #endif
 }
 
@@ -107,27 +82,29 @@ void bi_init (zipfile)
  * Send a value on a given number of bits.
  * IN assertion: length <= 16 and value fits in length bits.
  */
-void send_bits(value, length)
+void send_bits(s, value, length)
+    gzip_state_t *s;
     int value;  /* value to send */
     int length; /* number of bits */
 {
 #ifdef DEBUG
     Tracev((stderr," l %2d v %4x ", length, value));
     Assert(length > 0 && length <= 15, "invalid length");
-    bits_sent += (off_t)length;
+    s->bits_sent += (off_t)length;
 #endif
     /* If not enough room in bi_buf, use (valid) bits from bi_buf and
      * (16 - bi_valid) bits from value, leaving (width - (16-bi_valid))
      * unused bits in value.
      */
-    if (bi_valid > (int)Buf_size - length) {
-        bi_buf |= (value << bi_valid);
-        put_short(bi_buf);
-        bi_buf = (ush)value >> (Buf_size - bi_valid);
-        bi_valid += length - Buf_size;
+#define Buf_size (8 * sizeof(s->bi_buf))
+    if (s->bi_valid > (int)Buf_size - length) {
+        s->bi_buf |= (value << s->bi_valid);
+        put_short(s, s->bi_buf);
+        s->bi_buf = (ush)value >> (Buf_size - s->bi_valid);
+        s->bi_valid += length - Buf_size;
     } else {
-        bi_buf |= value << bi_valid;
-        bi_valid += length;
+        s->bi_buf |= value << s->bi_valid;
+        s->bi_valid += length;
     }
 }
 
@@ -151,17 +128,18 @@ unsigned bi_reverse(code, len)
 /* ===========================================================================
  * Write out any remaining bits in an incomplete byte.
  */
-void bi_windup()
+void bi_windup(s)
+    gzip_state_t *s;
 {
-    if (bi_valid > 8) {
-        put_short(bi_buf);
-    } else if (bi_valid > 0) {
-        put_byte(bi_buf);
+    if (s->bi_valid > 8) {
+        put_short(s, s->bi_buf);
+    } else if (s->bi_valid > 0) {
+        put_byte(s, s->bi_buf);
     }
-    bi_buf = 0;
-    bi_valid = 0;
+    s->bi_buf = 0;
+    s->bi_valid = 0;
 #ifdef DEBUG
-    bits_sent = (bits_sent+7) & ~7;
+    s->bits_sent = (s->bits_sent + 7) & ~7;
 #endif
 }
 
@@ -169,28 +147,25 @@ void bi_windup()
  * Copy a stored block to the zip file, storing first the length and its
  * one's complement if requested.
  */
-void copy_block(buf, len, header)
+void copy_block(s, buf, len, header)
+    gzip_state_t *s;
     char     *buf;    /* the input data */
     unsigned len;     /* its length */
     int      header;  /* true if block header must be written */
 {
-    bi_windup();              /* align on byte boundary */
+    bi_windup(s);              /* align on byte boundary */
 
     if (header) {
-        put_short((ush)len);   
-        put_short((ush)~len);
+        put_short(s, (ush)len);   
+        put_short(s, (ush)~len);
 #ifdef DEBUG
-        bits_sent += 2*16;
+        s->bits_sent += 2*16;
 #endif
     }
 #ifdef DEBUG
-    bits_sent += (off_t)len<<3;
+    s->bits_sent += (off_t)len<<3;
 #endif
     while (len--) {
-#ifdef CRYPT
-        int t;
-	if (key) zencode(*buf, t);
-#endif
-	put_byte(*buf++);
+	put_byte(s, *buf++);
     }
 }

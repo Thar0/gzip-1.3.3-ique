@@ -1,9 +1,11 @@
+#include <errno.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "gzip.h"
-#include "deflate.h"
 
 static void
 usage(const char *progname)
@@ -28,71 +30,91 @@ myerror(const char *fmt, ...)
     exit(EXIT_FAILURE);
 }
 
-int level;
-FILE *ifd;
-FILE *ofd;
-off_t ifile_size;       /* input file size, -1 for devices (debug only) */
-int method = DEFLATED;  /* compression method */
-time_t time_stamp;      /* original time stamp (modification time) */
-int verbose;            /* be verbose (-v) */
-int save_orig_name;     /* set if original name must be saved */
-unsigned insize;        /* valid bytes in inbuf */
-unsigned inptr;         /* index of next byte to be processed in inbuf */
-unsigned outcnt;        /* bytes in output buffer */
-off_t bytes_in;         /* number of input bytes */
-off_t bytes_out;        /* number of output bytes */
-int  remove_ofname;	    /* remove output file on error */
-char *ifname;           /* input file name */
-char *ofname;           /* output file name */
-char *progname;
+void *
+util_read_whole_file(const char *filename, size_t *size_out)
+{
+    FILE *file = fopen(filename, "rb");
+    void *buffer = NULL;
+    size_t size;
 
-DECLARE(uch, inbuf,  INBUFSIZ +INBUF_EXTRA);
-DECLARE(uch, outbuf, OUTBUFSIZ+OUTBUF_EXTRA);
-DECLARE(ush, d_buf,  DIST_BUFSIZE);
-/* Add an extra WIZE to the window to make the insufficient lookahead bug deterministic,
-   poking an 0xFF into position 4 matches OoT but may not match other use-cases */
-DECLARE(uch, window, 2L*WSIZE + WSIZE) = { [2L*WSIZE+4] = 0xFF};
-#ifndef MAXSEG_64K
-DECLARE(ush, tab_prefix, 1L<<BITS);
-#else
-DECLARE(ush, tab_prefix0, 1L<<(BITS-1));
-DECLARE(ush, tab_prefix1, 1L<<(BITS-1));
-#endif
+    if (file == NULL)
+        myerror("failed to open file '%s' for reading: %s", filename, strerror(errno));
 
-local void do_exit(exitcode)
+    // get size
+    fseek(file, 0, SEEK_END);
+    size = ftell(file);
+
+    // if the file is empty, return NULL buffer and 0 size
+    if (size != 0) {
+        // allocate buffer
+        buffer = malloc(size + 1);
+        if (buffer == NULL)
+            myerror("could not allocate buffer for file '%s'", filename);
+
+        // read file
+        fseek(file, 0, SEEK_SET);
+        if (fread(buffer, size, 1, file) != 1)
+            myerror("error reading from file '%s': %s", filename, strerror(errno));
+
+        // null-terminate the buffer (in case of text files)
+        ((char *)buffer)[size] = '\0';
+    }
+
+    fclose(file);
+
+    if (size_out != NULL)
+        *size_out = size;
+    return buffer;
+}
+
+void
+util_write_whole_file(const char *filename, const void *data, size_t size)
+{
+    FILE *file = fopen(filename, "wb");
+
+    if (file == NULL)
+        myerror("failed to open file '%s' for writing: %s", filename, strerror(errno));
+
+    if (fwrite(data, size, 1, file) != 1)
+        myerror("error writing to file '%s': %s", filename, strerror(errno));
+
+    fclose(file);
+}
+
+local void do_exit(s, exitcode)
+    gzip_state_t *s __attribute__((unused));
     int exitcode;
 {
     static int in_exit = 0;
 
     if (in_exit) exit(exitcode);
     in_exit = 1;
-    FREE(inbuf);
-    FREE(outbuf);
-    FREE(d_buf);
-    FREE(window);
-#ifndef MAXSEG_64K
-    FREE(tab_prefix);
-#else
-    FREE(tab_prefix0);
-    FREE(tab_prefix1);
-#endif
+    FREE(s);
     exit(exitcode);
 }
 
+void *signal_udata = NULL;
+
+typedef RETSIGTYPE (*sig_type) OF((int));
 RETSIGTYPE abort_gzip()
 {
-   if (remove_ofname) {
-       fclose(ofd);
-       xunlink (ofname);
-   }
-   do_exit(ERROR);
+    gzip_state_t *s = signal_udata;
+    if (s->remove_ofname) {
+        fclose(s->ofd);
+        xunlink(s->ofname);
+    }
+    do_exit(s, EXIT_FAILURE);
 }
+
+int do_compression(gzip_state_t *s);
 
 int
 main(int argc, char **argv)
 {
     const char *ifilename = NULL;
     const char *ofilename = NULL;
+    int level = 0;
+    int verbose = 0;
 
     // parse args
 
@@ -147,6 +169,21 @@ main(int argc, char **argv)
 
 #undef arg_error
 
+    if (signal(SIGINT, SIG_IGN) != SIG_IGN) {
+	(void) signal (SIGINT, (sig_type)abort_gzip);
+    }
+#ifdef SIGTERM
+    if (signal(SIGTERM, SIG_IGN) != SIG_IGN) {
+	(void) signal(SIGTERM, (sig_type)abort_gzip);
+    }
+#endif
+#ifdef SIGHUP
+    if (signal(SIGHUP, SIG_IGN) != SIG_IGN) {
+	(void) signal(SIGHUP,  (sig_type)abort_gzip);
+    }
+#endif
+
+
     FILE *ifile = fopen(ifilename, "rb");
     if (ifile == NULL)
         myerror("Could not open input file \"%s\" for reading", ifilename);
@@ -155,32 +192,66 @@ main(int argc, char **argv)
     if (ofile == NULL)
         myerror("Could not open output file \"%s\" for writing", ofilename);
 
-    // Construct gzip state
-    fseek(ifile, 0, SEEK_END);
-    ifile_size = ftell(ifile);
-    fseek(ifile, 0, SEEK_SET);
+    gzip_state_t *s = calloc(1, sizeof(gzip_state_t));
+    signal_udata = s;
+    s->level = level;
+    s->verbose = verbose;
+    s->progname = argv[0];
+    s->ifname = (char *)ifilename;
+    s->ofname = (char *)ofilename;
+    s->ifd = ifile;
+    s->ofd = ofile;
 
-    progname = argv[0];
-    remove_ofname = 1;
-    ifname = (char *)ifilename;
-    ofname = (char *)ofilename;
-    time_stamp = 0;
-    clear_bufs();
-    save_orig_name = 0;
+    // XXX OoT fix, make the extra window data an argument
+    s->window[2L*WSIZE+4] = 0xFF;
+
+    size_t fsize;
+    __attribute__((unused)) void *idata = util_read_whole_file(ifilename, &fsize);
+    s->ifile_size = fsize;
 
     // Go
-    if (zip(ifile, ofile) != OK) {
+    if (do_compression(s) != OK) {
         myerror("gzip fail");
-    }
-
-    if(verbose) {
-        display_ratio(bytes_in-(bytes_out-header_bytes), bytes_in, stderr);
-        fprintf(stderr, "\n");
     }
 
     // Done
     fclose(ifile);
     fclose(ofile);
 
+    do_exit(s, EXIT_SUCCESS);
     return EXIT_SUCCESS;
+}
+
+int do_compression(gzip_state_t *s) {
+    local const int extra_lbits[LENGTH_CODES] /* extra bits for each length code */
+        = {0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0};
+
+    local const int extra_dbits[D_CODES] /* extra bits for each distance code */
+        = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13};
+
+    local const int extra_blbits[BL_CODES]/* extra bits for each bit length code */
+        = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,3,7};
+
+    s->remove_ofname = 1;
+    s->time_stamp = 0;
+    clear_bufs(s);
+    s->save_orig_name = 0;
+    s->window_size = 2L*WSIZE;
+
+
+    s->l_desc  = (tree_desc){s->dyn_ltree, s->static_ltree, extra_lbits, LITERALS+1, L_CODES, MAX_BITS, 0};
+    s->d_desc  = (tree_desc){s->dyn_dtree, s->static_dtree, extra_dbits, 0,          D_CODES, MAX_BITS, 0};
+    s->bl_desc = (tree_desc){s->bl_tree, (ct_data*)NULL, extra_blbits, 0,      BL_CODES, MAX_BL_BITS, 0};
+
+
+    int ret = zip(s);
+    if (ret != OK)
+        return ret;
+    
+    if (s->verbose) {
+        display_ratio(s->bytes_in - (s->bytes_out - s->header_bytes), s->bytes_in, stderr);
+        fprintf(stderr, "\n");
+    }
+
+    return ret;
 }
