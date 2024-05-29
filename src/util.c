@@ -19,7 +19,6 @@ static char rcsid[] = "$Id: util.c,v 0.15 1993/06/15 09:04:13 jloup Exp $";
 
 #include "tailor.h"
 #include "gzip.h"
-#include "crypt.h"
 
 #ifndef CHAR_BIT
 #  define CHAR_BIT 8
